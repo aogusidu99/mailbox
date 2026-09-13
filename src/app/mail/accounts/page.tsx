@@ -37,6 +37,7 @@ export default async function AccountsPage() {
                 lastSyncAt: a.lastSyncAt ? a.lastSyncAt.toISOString() : null,
                 aiEnabled: a.aiEnabled,
                 syncWindowDays: a.syncWindowDays,
+                authType: a.authType,
               }}
             />
           ))}

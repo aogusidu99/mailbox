@@ -7,6 +7,7 @@ import {
   FileText,
   Folder,
   Inbox,
+  Languages,
   ListChecks,
   Loader2,
   Mail,
@@ -20,7 +21,9 @@ import {
   Wand2,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
+import { useTransition } from "react";
+import { setLocaleAction } from "@/app/locale-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -28,6 +31,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api-client";
 import type { SidebarData } from "@/lib/api-types";
+import { useLocale, useT } from "@/lib/locale-context";
 import { cn } from "cn";
 
 const ROLE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -41,16 +45,6 @@ const ROLE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   other: Folder,
 };
 
-const ROLE_LABELS: Record<string, string> = {
-  inbox: "收件箱",
-  sent: "已发送",
-  drafts: "草稿箱",
-  trash: "已删除",
-  junk: "垃圾邮件",
-  archive: "归档",
-  all: "所有邮件",
-};
-
 export function Sidebar({
   initial,
   userEmail,
@@ -62,62 +56,72 @@ export function Sidebar({
   signOutAction: () => Promise<void>;
   onNavigate?: () => void;
 }) {
+  const t = useT();
+  const locale = useLocale();
+  const router = useRouter();
+  const [switching, startSwitch] = useTransition();
   const params = useParams<{ accountId?: string; folderId?: string }>();
   const { data } = useQuery({ queryKey: ["sidebar"], queryFn: api.sidebar, initialData: initial, refetchInterval: 30_000 });
+  const roleLabels = t.folder as Record<string, string>;
+
+  const switchLocale = () =>
+    startSwitch(async () => {
+      await setLocaleAction(locale === "zh-CN" ? "en" : "zh-CN");
+      router.refresh();
+    });
+
+  const navLink = (href: string, Icon: React.ComponentType<{ className?: string }>, label: string) => (
+    <Link href={href} onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
+      <Icon className="size-3.5" /> {label}
+    </Link>
+  );
 
   return (
     <div className="flex h-full w-64 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground">
       <div className="flex h-12 items-center justify-between border-b px-3">
         <Link href="/mail" className="font-semibold" onClick={onNavigate}>
-          Mailbox
+          {t.appName}
         </Link>
         <div className="flex items-center gap-1">
           <Tooltip>
             <TooltipTrigger
               render={
-                <Link href="/mail/accounts/new" onClick={onNavigate} className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" />
+                <Link href="/mail/accounts/new" onClick={onNavigate} className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" aria-label={t.nav.addAccount} />
               }
             >
               <Plus className="size-4" />
             </TooltipTrigger>
-            <TooltipContent>添加邮箱</TooltipContent>
+            <TooltipContent>{t.nav.addAccount}</TooltipContent>
           </Tooltip>
           <DropdownMenu>
-            <DropdownMenuTrigger render={<button type="button" className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" aria-label="设置" />}>
+            <DropdownMenuTrigger render={<button type="button" className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" aria-label={t.nav.settings} />}>
               <Settings className="size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem render={<Link href="/mail/accounts" onClick={onNavigate} />}>邮箱管理</DropdownMenuItem>
-              <DropdownMenuItem render={<Link href="/mail/settings/ai" onClick={onNavigate} />}>AI 设置</DropdownMenuItem>
-              <DropdownMenuItem render={<Link href="/mail/settings/rules" onClick={onNavigate} />}>邮件规则</DropdownMenuItem>
-              <DropdownMenuItem render={<Link href="/mail/digest" onClick={onNavigate} />}>每日摘要</DropdownMenuItem>
+              <DropdownMenuItem render={<Link href="/mail/accounts" onClick={onNavigate} />}>{t.nav.accounts}</DropdownMenuItem>
+              <DropdownMenuItem render={<Link href="/mail/settings/ai" onClick={onNavigate} />}>{t.nav.ai}</DropdownMenuItem>
+              <DropdownMenuItem render={<Link href="/mail/settings/rules" onClick={onNavigate} />}>{t.nav.mailRules}</DropdownMenuItem>
+              <DropdownMenuItem render={<Link href="/mail/settings/oauth" onClick={onNavigate} />}>{t.nav.oauth}</DropdownMenuItem>
+              <DropdownMenuItem render={<Link href="/mail/digest" onClick={onNavigate} />}>{t.nav.digest}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-0.5 border-b px-2 py-1.5 text-xs">
-        <Link href="/mail/chat" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
-          <MessageSquare className="size-3.5" /> 和邮箱对话
-        </Link>
-        <Link href="/mail/todos" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
-          <ListChecks className="size-3.5" /> 待办
-        </Link>
-        <Link href="/mail/digest" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
-          <Sparkles className="size-3.5" /> 每日摘要
-        </Link>
-        <Link href="/mail/settings/rules" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
-          <Wand2 className="size-3.5" /> 规则
-        </Link>
+        {navLink("/mail/chat", MessageSquare, t.nav.chat)}
+        {navLink("/mail/todos", ListChecks, t.nav.todos)}
+        {navLink("/mail/digest", Sparkles, t.nav.digest)}
+        {navLink("/mail/settings/rules", Wand2, t.nav.rules)}
       </div>
 
       <ScrollArea className="flex-1">
         <nav className="space-y-4 p-2">
           {data.accounts.length === 0 ? (
             <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-              还没有邮箱
+              {t.nav.noAccounts}
               <div className="mt-2">
                 <Button size="sm" render={<Link href="/mail/accounts/new" onClick={onNavigate} />}>
-                  添加邮箱
+                  {t.nav.addAccount}
                 </Button>
               </div>
             </div>
@@ -134,20 +138,18 @@ export function Sidebar({
                     <TooltipTrigger render={<span className="inline-flex" />}>
                       <AlertCircle className="size-3 text-destructive" />
                     </TooltipTrigger>
-                    <TooltipContent className="max-w-xs">{account.syncError ?? "同步出错"}</TooltipContent>
+                    <TooltipContent className="max-w-xs">{account.syncError ?? t.nav.syncError}</TooltipContent>
                   </Tooltip>
                 ) : null}
               </div>
-              {account.folders.length === 0 ? (
-                <div className="px-2 py-1 text-xs text-muted-foreground">正在获取文件夹…</div>
-              ) : null}
+              {account.folders.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">{t.nav.fetchingFolders}</div> : null}
               <ul className="space-y-0.5">
                 {account.folders
                   .filter((f) => !f.noSelect || f.depth === 0)
                   .map((folder) => {
                     const Icon = ROLE_ICONS[folder.role] ?? Folder;
                     const active = params.accountId === account.id && params.folderId === folder.id;
-                    const label = folder.role !== "other" && folder.depth === 0 ? (ROLE_LABELS[folder.role] ?? folder.name) : folder.name;
+                    const label = folder.role !== "other" && folder.depth === 0 ? (roleLabels[folder.role] ?? folder.name) : folder.name;
                     return (
                       <li key={folder.id}>
                         <Link
@@ -182,11 +184,16 @@ export function Sidebar({
         <span className="truncate" title={userEmail}>
           {userEmail}
         </span>
-        <form action={signOutAction}>
-          <Button type="submit" variant="ghost" size="xs">
-            退出
+        <div className="flex items-center gap-1">
+          <Button type="button" variant="ghost" size="xs" onClick={switchLocale} disabled={switching} aria-label={t.nav.language}>
+            <Languages className="size-3.5" /> {t.nav.language}
           </Button>
-        </form>
+          <form action={signOutAction}>
+            <Button type="submit" variant="ghost" size="xs">
+              {t.nav.signOut}
+            </Button>
+          </form>
+        </div>
       </div>
     </div>
   );

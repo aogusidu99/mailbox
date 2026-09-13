@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { ComposePayload, UploadedAttachment } from "@/lib/api-types";
 import { formatBytes } from "@/lib/format";
+import { fmt } from "@/lib/i18n";
+import { useT } from "@/lib/locale-context";
 
 export interface ComposeInitial {
   to?: string;
@@ -44,6 +46,7 @@ export function ComposeDialog({
   initial?: ComposeInitial;
   onSent?: () => void;
 }) {
+  const t = useT().compose;
   const [to, setTo] = useState(initial?.to ?? "");
   const [cc, setCc] = useState(initial?.cc ?? "");
   const [bcc, setBcc] = useState(initial?.bcc ?? "");
@@ -79,7 +82,7 @@ export function ComposeDialog({
         form.append("file", file);
         const res = await fetch("/api/mail/uploads", { method: "POST", body: form });
         const body = (await res.json()) as UploadedAttachment & { error?: string };
-        if (!res.ok) throw new Error(body.error ?? `上传失败（${res.status}）`);
+        if (!res.ok) throw new Error(body.error ?? fmt(t.uploadFailed, { status: res.status }));
         setAttachments((list) => [...list, body]);
       }
     } catch (err) {
@@ -97,7 +100,7 @@ export function ComposeDialog({
         toast.error(r.error);
         return;
       }
-      toast.success("已发送");
+      toast.success(t.sending);
       onSent?.();
       onOpenChange(false);
     });
@@ -109,29 +112,30 @@ export function ComposeDialog({
         toast.error(r.error);
         return;
       }
-      toast.success("草稿已保存到服务器，稍后会出现在草稿箱");
+      toast.success(t.draftSaved);
       onOpenChange(false);
     });
 
   const busy = sending || saving || uploading;
+  const title = initial?.draftMessageId ? t.titleDraft : initial?.inReplyToMessageId ? t.titleReply : initial?.forwardOfMessageId ? t.titleForward : t.titleNew;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] flex-col gap-3 sm:max-w-2xl">
+      <DialogContent className="flex max-h-[90vh] flex-col gap-3 max-sm:h-full max-sm:max-h-full max-sm:max-w-full max-sm:rounded-none sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{initial?.draftMessageId ? "编辑草稿" : initial?.inReplyToMessageId ? "回复" : initial?.forwardOfMessageId ? "转发" : "写邮件"}</DialogTitle>
-          <DialogDescription>发件人：{accountEmail}</DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{fmt(t.from, { email: accountEmail })}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             <label className="w-12 shrink-0 text-sm text-muted-foreground" htmlFor="compose-to">
-              收件人
+              {t.to}
             </label>
-            <Input id="compose-to" value={to} onChange={(e) => setTo(e.target.value)} placeholder="多个地址用逗号分隔" />
+            <Input id="compose-to" value={to} onChange={(e) => setTo(e.target.value)} placeholder={t.toPlaceholder} />
             {!showCc ? (
               <Button variant="ghost" size="xs" onClick={() => setShowCc(true)}>
-                抄送/密送
+                {t.ccBcc}
               </Button>
             ) : null}
           </div>
@@ -139,13 +143,13 @@ export function ComposeDialog({
             <>
               <div className="flex items-center gap-2">
                 <label className="w-12 shrink-0 text-sm text-muted-foreground" htmlFor="compose-cc">
-                  抄送
+                  {t.cc}
                 </label>
                 <Input id="compose-cc" value={cc} onChange={(e) => setCc(e.target.value)} />
               </div>
               <div className="flex items-center gap-2">
                 <label className="w-12 shrink-0 text-sm text-muted-foreground" htmlFor="compose-bcc">
-                  密送
+                  {t.bcc}
                 </label>
                 <Input id="compose-bcc" value={bcc} onChange={(e) => setBcc(e.target.value)} />
               </div>
@@ -153,24 +157,18 @@ export function ComposeDialog({
           ) : null}
           <div className="flex items-center gap-2">
             <label className="w-12 shrink-0 text-sm text-muted-foreground" htmlFor="compose-subject">
-              主题
+              {t.subject}
             </label>
             <Input id="compose-subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
           </div>
         </div>
 
-        <Textarea
-          aria-label="正文"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          className="min-h-[240px] flex-1 resize-y font-sans text-sm"
-          placeholder="正文…"
-        />
+        <Textarea aria-label={t.body} value={text} onChange={(e) => setText(e.target.value)} className="min-h-[240px] flex-1 resize-y font-sans text-sm" placeholder={t.bodyPlaceholder} />
 
         {initial?.originalAttachmentNames?.length ? (
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <input type="checkbox" checked={includeOriginal} onChange={(e) => setIncludeOriginal(e.target.checked)} />
-            附上原邮件附件（{initial.originalAttachmentNames.join("、")}）
+            {fmt(t.includeOriginal, { names: initial.originalAttachmentNames.join("、") })}
           </label>
         ) : null}
 
@@ -181,7 +179,7 @@ export function ComposeDialog({
                 <Paperclip className="size-3" />
                 <span className="max-w-48 truncate">{a.filename}</span>
                 <span className="text-muted-foreground">{formatBytes(a.size)}</span>
-                <button type="button" onClick={() => setAttachments((l) => l.filter((x) => x.id !== a.id))} aria-label="移除附件">
+                <button type="button" onClick={() => setAttachments((l) => l.filter((x) => x.id !== a.id))} aria-label={t.removeAttachment}>
                   <X className="size-3" />
                 </button>
               </li>
@@ -192,18 +190,18 @@ export function ComposeDialog({
         <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
           <div className="flex items-center gap-2">
             <Button onClick={send} disabled={busy || !to.trim()}>
-              {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} 发送
+              {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />} {t.send}
             </Button>
             <Button variant="outline" onClick={save} disabled={busy}>
-              {saving ? <Loader2 className="size-4 animate-spin" /> : null} 保存草稿
+              {saving ? <Loader2 className="size-4 animate-spin" /> : null} {t.saveDraft}
             </Button>
             <Button variant="ghost" onClick={() => fileInput.current?.click()} disabled={busy}>
-              {uploading ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />} 附件
+              {uploading ? <Loader2 className="size-4 animate-spin" /> : <Paperclip className="size-4" />} {t.attach}
             </Button>
             <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => void upload(e.target.files)} />
           </div>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
-            丢弃
+            {t.discard}
           </Button>
         </div>
       </DialogContent>

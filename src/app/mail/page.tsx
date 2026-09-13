@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { getServerDict } from "@/lib/locale-server";
 import { requireUserPage } from "@/server/auth/session";
 import { listAccounts, listFoldersForAccount } from "@/server/mail/accounts";
 import { WaitingForSync } from "./waiting-for-sync";
@@ -10,11 +11,12 @@ export default async function MailHomePage() {
   const user = await requireUserPage();
   const accounts = await listAccounts(user.id);
   if (accounts.length === 0) {
+    const t = (await getServerDict()).home;
     return (
       <main className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <h1 className="text-xl font-semibold">欢迎使用 Mailbox</h1>
-        <p className="max-w-md text-sm text-muted-foreground">先添加一个邮箱（Gmail、QQ、163 或任意 IMAP 邮箱），几分钟内就能在这里看到你的邮件。</p>
-        <Button render={<Link href="/mail/accounts/new" />}>添加邮箱</Button>
+        <h1 className="text-xl font-semibold">{t.welcome}</h1>
+        <p className="max-w-md text-sm text-muted-foreground">{t.intro}</p>
+        <Button render={<Link href="/mail/accounts/new" />}>{t.add}</Button>
       </main>
     );
   }

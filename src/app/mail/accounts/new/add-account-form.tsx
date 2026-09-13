@@ -1,6 +1,7 @@
 "use client";
 
 import { CheckCircle2, ChevronDown, Loader2, XCircle } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -129,9 +130,21 @@ export function AddAccountForm({ presets }: { presets: PresetOption[] }) {
           <FieldDescription className="whitespace-pre-line">{preset.help}</FieldDescription>
         </Field>
 
+        {preset.id === "gmail" || preset.id === "outlook" ? (
+          <div className="rounded-md border p-3 text-sm">
+            <div className="font-medium">也可以用 OAuth 授权登录</div>
+            <div className="text-xs text-muted-foreground">
+              先在 <Link href="/mail/settings/oauth" className="underline">OAuth 设置</Link> 里填入 {preset.id === "gmail" ? "Google" : "Microsoft"} 应用凭据，然后
+              <a className="ml-1 underline" href={`/api/oauth/${preset.id === "gmail" ? "google" : "microsoft"}/start${email ? `?login_hint=${encodeURIComponent(email)}` : ""}`}>
+                点这里授权连接
+              </a>
+              。
+            </div>
+          </div>
+        ) : null}
         {oauthOnly ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            {preset.label} 需要 OAuth 授权登录，将在 M5 提供。
+            {preset.label} 已停用密码登录，请使用上面的 OAuth 授权方式。
           </div>
         ) : (
           <Field>

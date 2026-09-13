@@ -31,6 +31,7 @@ export interface AccountRowData {
   lastSyncAt: string | null;
   aiEnabled: boolean;
   syncWindowDays: number;
+  authType: string;
 }
 
 const STATUS_LABEL: Record<string, string> = { idle: "正常", syncing: "同步中", error: "出错", disabled: "已停用" };
@@ -71,7 +72,16 @@ export function AccountRow({ account }: { account: AccountRowData }) {
           <Badge variant={account.syncStatus === "error" ? "destructive" : "secondary"}>{STATUS_LABEL[account.syncStatus] ?? account.syncStatus}</Badge>
         </div>
         <div className="text-xs text-muted-foreground">
-          {account.presetId ?? "imap"} · 同步范围 {account.syncWindowDays} 天 · 上次同步 {account.lastSyncAt ? formatFullDate(account.lastSyncAt) : "从未"}
+          {account.presetId ?? "imap"}
+          {account.authType === "oauth2" ? " · OAuth" : ""} · 同步范围 {account.syncWindowDays} 天 · 上次同步 {account.lastSyncAt ? formatFullDate(account.lastSyncAt) : "从未"}
+          {account.authType === "oauth2" ? (
+            <>
+              {" · "}
+              <a className="underline" href={`/api/oauth/${account.presetId === "outlook" ? "microsoft" : "google"}/start?login_hint=${encodeURIComponent(account.email)}`}>
+                重新授权
+              </a>
+            </>
+          ) : null}
         </div>
         {account.syncError ? <div className="text-xs text-destructive">{account.syncError}</div> : null}
       </div>

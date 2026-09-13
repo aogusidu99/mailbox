@@ -2,23 +2,15 @@ import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { folders } from "@/db/schema";
+import { getServerDict } from "@/lib/locale-server";
 import { requireUserPage } from "@/server/auth/session";
 import { getAccountForUser } from "@/server/mail/accounts";
 import { FolderWorkspace } from "./folder-workspace";
 
-const ROLE_LABELS: Record<string, string> = {
-  inbox: "收件箱",
-  sent: "已发送",
-  drafts: "草稿箱",
-  trash: "已删除",
-  junk: "垃圾邮件",
-  archive: "归档",
-  all: "所有邮件",
-};
-
 export default async function FolderPage(props: PageProps<"/mail/[accountId]/[folderId]">) {
   const { accountId, folderId } = await props.params;
   const user = await requireUserPage();
+  const ROLE_LABELS = (await getServerDict()).folder as Record<string, string>;
   const account = await getAccountForUser(user.id, accountId);
   if (!account) notFound();
   const db = await getDb();

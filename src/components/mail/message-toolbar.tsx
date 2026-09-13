@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { MessageDetail, SidebarFolder } from "@/lib/api-types";
+import { fmt } from "@/lib/i18n";
+import { useT } from "@/lib/locale-context";
 
 export type ReplyKind = "reply" | "replyAll" | "forward" | "editDraft" | "aiReply";
 
@@ -35,6 +37,7 @@ export function MessageToolbar({
   /** 标记变化 */
   onChanged: () => void;
 }) {
+  const t = useT().toolbar;
   const [pending, start] = useTransition();
   const ids = [message.id];
 
@@ -42,7 +45,7 @@ export function MessageToolbar({
     start(async () => {
       const r = await fn();
       if (!r.ok) {
-        toast.error(r.error ?? "操作失败");
+        toast.error(r.error ?? t.actionFailed);
         return;
       }
       if (success) toast.success(success);
@@ -58,61 +61,61 @@ export function MessageToolbar({
     <>
       {isDraft ? (
         <Button size="sm" onClick={() => onCompose("editDraft")}>
-          <Pencil className="size-4" /> 编辑草稿
+          <Pencil className="size-4" /> {t.editDraft}
         </Button>
       ) : (
         <>
-          <IconButton label="回复" onClick={() => onCompose("reply")}>
+          <IconButton label={t.reply} onClick={() => onCompose("reply")}>
             <Reply className="size-4" />
           </IconButton>
-          <IconButton label="全部回复" onClick={() => onCompose("replyAll")}>
+          <IconButton label={t.replyAll} onClick={() => onCompose("replyAll")}>
             <ReplyAll className="size-4" />
           </IconButton>
-          <IconButton label="转发" onClick={() => onCompose("forward")}>
+          <IconButton label={t.forward} onClick={() => onCompose("forward")}>
             <Forward className="size-4" />
           </IconButton>
-          <IconButton label="AI 起草回复" onClick={() => onCompose("aiReply")}>
+          <IconButton label={t.aiReply} onClick={() => onCompose("aiReply")}>
             <Sparkles className="size-4" />
           </IconButton>
-          <IconButton label="AI 分析" disabled={pending} onClick={() => act(() => aiAnalyzeAction(message.id), "changed", "已完成 AI 分析")}>
+          <IconButton label={t.aiAnalyze} disabled={pending} onClick={() => act(() => aiAnalyzeAction(message.id), "changed", t.aiAnalyzed)}>
             <Wand2 className="size-4" />
           </IconButton>
         </>
       )}
       <span className="mx-1 h-5 w-px bg-border" />
       {!isTrash && message.folderRole !== "archive" && message.folderRole !== "all" ? (
-        <IconButton label="归档" disabled={pending} onClick={() => act(() => archiveAction(ids), "removed", "已归档")}>
+        <IconButton label={t.archive} disabled={pending} onClick={() => act(() => archiveAction(ids), "removed", t.archived)}>
           <Archive className="size-4" />
         </IconButton>
       ) : null}
-      <IconButton label={isTrash ? "彻底删除" : "删除"} disabled={pending} onClick={() => act(() => trashAction(ids), "removed", isTrash ? "已彻底删除" : "已移到已删除")}>
+      <IconButton label={isTrash ? t.deleteForever : t.delete} disabled={pending} onClick={() => act(() => trashAction(ids), "removed", isTrash ? t.deletedForever : t.movedToTrash)}>
         <Trash2 className="size-4" />
       </IconButton>
       {isJunk ? (
-        <IconButton label="不是垃圾邮件" disabled={pending} onClick={() => act(() => notJunkAction(ids), "removed", "已移回收件箱")}>
+        <IconButton label={t.notJunk} disabled={pending} onClick={() => act(() => notJunkAction(ids), "removed", t.movedToInbox)}>
           <Inbox className="size-4" />
         </IconButton>
       ) : (
-        <IconButton label="标为垃圾邮件" disabled={pending} onClick={() => act(() => junkAction(ids), "removed", "已标为垃圾邮件")}>
+        <IconButton label={t.junk} disabled={pending} onClick={() => act(() => junkAction(ids), "removed", t.markedJunk)}>
           <ShieldAlert className="size-4" />
         </IconButton>
       )}
       <span className="mx-1 h-5 w-px bg-border" />
-      <IconButton label={message.seen ? "标为未读" : "标为已读"} disabled={pending} onClick={() => act(() => markReadAction(ids, !message.seen), "changed")}>
+      <IconButton label={message.seen ? t.markUnread : t.markRead} disabled={pending} onClick={() => act(() => markReadAction(ids, !message.seen), "changed")}>
         {message.seen ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
       </IconButton>
-      <IconButton label={message.flagged ? "取消星标" : "加星标"} disabled={pending} onClick={() => act(() => flagAction(ids, !message.flagged), "changed")}>
+      <IconButton label={message.flagged ? t.unflag : t.flag} disabled={pending} onClick={() => act(() => flagAction(ids, !message.flagged), "changed")}>
         <Star className={message.flagged ? "size-4 fill-amber-400 text-amber-400" : "size-4"} />
       </IconButton>
       <DropdownMenu>
-        <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="移动到" disabled={pending} />}>
+        <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={t.moveTo} disabled={pending} />}>
           <FolderInput className="size-4" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="max-h-80 overflow-auto">
           {folders
             .filter((f) => !f.noSelect && f.id !== message.folderId)
             .map((f) => (
-              <DropdownMenuItem key={f.id} onClick={() => act(() => moveAction(ids, f.id), "removed", `已移动到 ${f.name}`)}>
+              <DropdownMenuItem key={f.id} onClick={() => act(() => moveAction(ids, f.id), "removed", fmt(t.movedTo, { folder: f.name }))}>
                 <span style={{ paddingLeft: `${Math.min(f.depth, 4) * 10}px` }}>{f.name}</span>
               </DropdownMenuItem>
             ))}

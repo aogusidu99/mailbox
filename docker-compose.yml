@@ -1,0 +1,37 @@
+# 生产部署：Web（含同进程 worker）+ PostgreSQL
+# 用法：cp .env.docker.example .env.docker && 编辑 → docker compose up -d --build
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mailbox
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailbox}
+      POSTGRES_DB: mailbox
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailbox -d mailbox"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env.docker
+    environment:
+      DATABASE_URL: postgres://mailbox:${POSTGRES_PASSWORD:-mailbox}@db:5432/mailbox
+      WORKER_ENABLED: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - appdata:/app/data
+
+volumes:
+  pgdata:
+  appdata:

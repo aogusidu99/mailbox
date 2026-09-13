@@ -12,7 +12,9 @@
     "db:generate": "drizzle-kit generate",
     "db:studio": "drizzle-kit studio",
     "setup": "bun scripts/setup.ts",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "db:backup": "bun --env-file=.env.local scripts/backup.ts",
+    "docker:build": "docker build -t mailbox ."
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",

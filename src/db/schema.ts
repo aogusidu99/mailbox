@@ -301,6 +301,23 @@ export const aiDigests = pgTable(
   (t) => [uniqueIndex("ai_digests_user_day_uq").on(t.userId, t.day)],
 );
 
+/** OAuth 应用凭据（Google Cloud / Azure 注册的 client id & secret），用于 Gmail / Outlook 授权登录 */
+export const oauthClients = pgTable(
+  "oauth_clients",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** google | microsoft */
+    provider: text("provider").notNull(),
+    clientId: text("client_id").notNull(),
+    clientSecretEnc: text("client_secret_enc").notNull(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("oauth_clients_user_provider_uq").on(t.userId, t.provider)],
+);
+
 /** 自然语言规则 */
 export const rules = pgTable("rules", {
   id: uuid("id").primaryKey().defaultRandom(),

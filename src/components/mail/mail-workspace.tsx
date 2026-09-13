@@ -7,6 +7,7 @@ import { useCallback, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import type { MessageListItem } from "@/lib/api-types";
+import { useT } from "@/lib/locale-context";
 import { useIsMobile } from "@/lib/use-media-query";
 import { MessageList } from "./message-list";
 import { MessageView } from "./message-view";
@@ -43,6 +44,7 @@ export function MailWorkspace({
   const [refreshing, startRefresh] = useTransition();
   const [mobileShowView, setMobileShowView] = useState(Boolean(selectedId));
   const isMobile = useIsMobile();
+  const t = useT();
 
   const select = useCallback(
     (item: MessageListItem) => {
@@ -94,7 +96,7 @@ export function MailWorkspace({
       return (
         <div className="flex h-full flex-col">
           <button type="button" onClick={back} className="border-b px-3 py-2 text-left text-sm text-primary">
-            ← 返回列表
+            {t.view.back}
           </button>
           <div className="min-h-0 flex-1">
             <MessageView key={selectedId} messageId={selectedId} toolbar={viewToolbar} />
@@ -118,7 +120,7 @@ export function MailWorkspace({
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
             <Mail className="size-8 opacity-40" />
-            选择一封邮件查看
+            {t.view.selectMessage}
           </div>
         )}
       </ResizablePanel>

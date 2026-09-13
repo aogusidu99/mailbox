@@ -29,6 +29,13 @@
       "when": 1789287656328,
       "tag": "0003_massive_agent_brand",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789288523899,
+      "tag": "0004_high_sentinel",
+      "breakpoints": true
     }
   ]
 }

@@ -55,4 +55,20 @@ test("登录后添加邮箱并阅读同步下来的邮件", async ({ page }) => 
   await expect(page.getByText(/已屏蔽 1 张远程图片/)).toBeVisible();
 
   await page.screenshot({ path: "test-results/m1-inbox.png", fullPage: false });
+
+  // 中 / 英文切换（侧栏底部）
+  await page.getByRole("button", { name: "English" }).click();
+  await expect(page.getByRole("link", { name: /Inbox/ }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reply", exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/m1-inbox-en.png", fullPage: false });
+  await page.getByRole("button", { name: "中文" }).click();
+  await expect(page.getByRole("link", { name: /收件箱/ }).first()).toBeVisible();
+
+  // OAuth 设置页可打开并显示回调地址；PWA 清单可访问
+  await page.goto("/mail/settings/oauth");
+  await expect(page.getByRole("heading", { name: "OAuth 授权登录" })).toBeVisible();
+  await expect(page.getByText(/\/api\/oauth\/google\/callback/)).toBeVisible();
+  const manifest = await page.request.get("/manifest.webmanifest");
+  expect(manifest.ok()).toBe(true);
+  expect(((await manifest.json()) as { name: string }).name).toBe("Mailbox");
 });

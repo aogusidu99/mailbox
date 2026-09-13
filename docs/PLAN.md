@@ -270,6 +270,11 @@ M4 验证记录（2026-09-13）：自然语言规则（rules 等级编译 → �
 list_recent / read_message / propose_actions，操作只给建议、用户确认后执行）、待办面板、退订助手（RFC 8058 一键退订 / mailto / 链接）。
 `bun test` 新增规则求值与编译、向量化与语义搜索、Agent 工具循环、退订测试；`bun run e2e` 新增 m4 用例（规则 → 对话 → 待办）。
 
+M5 验证记录（2026-09-13）：Gmail / Outlook OAuth（授权码 + PKCE，state 签名，token 自动续期，XOAUTH2 登录 IMAP/SMTP，
+凭据在「OAuth 设置」页配置）、PWA（manifest + Service Worker 离线壳）、移动端写信全屏、中 / 英文核心界面、
+Docker（standalone 镜像 + compose 含 PostgreSQL）、备份脚本、README。OAuth 流程用假令牌端点做了单元测试，
+真实 Google / Microsoft 授权需要用户自己注册应用后验证。未做：Gmail API / Graph 推送（IDLE 已覆盖实时），Batch API 回填。
+
 需要你确认的 4 个决定：
 
 1. **首批接入哪些邮箱**：Gmail（应用专用密码 vs OAuth）、QQ、163、Outlook？

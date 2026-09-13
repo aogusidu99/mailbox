@@ -27,6 +27,9 @@ const envSchema = z.object({
   /** Anthropic API Key（可选）：只作为首次启动的种子，正式以设置页保存的加密 Key 为准。 */
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
 
+  /** 对外访问地址（OAuth 回调用），不填则按请求的 origin 推断，例如 https://mail.example.com */
+  APP_BASE_URL: z.string().url().optional(),
+
   /** 是否在本进程内启动后台 worker（同步/AI 任务）。 */
   WORKER_ENABLED: z
     .enum(["true", "false"])

@@ -49,3 +49,4 @@ next-env.d.ts
 # 测试产物
 /test-results/
 /playwright-report/
+!.env.docker.example
