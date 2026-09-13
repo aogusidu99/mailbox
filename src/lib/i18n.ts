@@ -26,6 +26,8 @@ const zh = {
     fetchingFolders: "正在获取文件夹…",
     syncError: "同步出错",
     language: "English",
+    collapseAll: "全部折叠",
+    expandAll: "全部展开",
   },
   folder: { inbox: "收件箱", sent: "已发送", drafts: "草稿箱", trash: "已删除", junk: "垃圾邮件", archive: "归档", all: "所有邮件" },
   list: {
@@ -163,6 +165,8 @@ const en: Dict = {
     fetchingFolders: "Fetching folders…",
     syncError: "Sync error",
     language: "中文",
+    collapseAll: "Collapse all",
+    expandAll: "Expand all",
   },
   folder: { inbox: "Inbox", sent: "Sent", drafts: "Drafts", trash: "Trash", junk: "Junk", archive: "Archive", all: "All mail" },
   list: {

@@ -4,6 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
   Archive,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   FileText,
   Folder,
   Inbox,
@@ -22,7 +26,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { setLocaleAction } from "@/app/locale-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +48,17 @@ const ROLE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = 
   other: Folder,
 };
 
+const COLLAPSED_KEY = "mailbox:collapsedAccounts";
+
+/** 从 localStorage 读取各邮箱折叠状态（SSR / 出错时返回空） */
+function readCollapsed(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "{}") as Record<string, boolean>;
+  } catch {
+    return {};
+  }
+}
+
 export function Sidebar({
   initial,
   userEmail,
@@ -62,6 +77,29 @@ export function Sidebar({
   const params = useParams<{ accountId?: string; folderId?: string }>();
   const { data } = useQuery({ queryKey: ["sidebar"], queryFn: api.sidebar, initialData: initial, refetchInterval: 30_000 });
   const roleLabels = t.folder as Record<string, string>;
+
+  // 每个邮箱折叠/展开状态，记在 localStorage
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  // 挂载后从 localStorage 恢复折叠状态（先渲染默认值，避免 SSR/客户端不一致）
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 一次性从 localStorage 水合 UI 偏好
+    setCollapsed(readCollapsed());
+  }, []);
+  const persistCollapsed = (next: Record<string, boolean>) => {
+    setCollapsed(next);
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next));
+    } catch {
+      /* 忽略 */
+    }
+  };
+  const toggleAccount = (id: string) => persistCollapsed({ ...collapsed, [id]: !collapsed[id] });
+  const allCollapsed = data.accounts.length > 0 && data.accounts.every((a) => collapsed[a.id]);
+  const toggleAll = () => {
+    const next: Record<string, boolean> = {};
+    for (const a of data.accounts) next[a.id] = !allCollapsed;
+    persistCollapsed(next);
+  };
 
   const switchLocale = () =>
     startSwitch(async () => {
@@ -82,6 +120,18 @@ export function Sidebar({
           {t.appName}
         </Link>
         <div className="flex items-center gap-1">
+          {data.accounts.length > 0 ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button type="button" onClick={toggleAll} className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" aria-label={allCollapsed ? t.nav.expandAll : t.nav.collapseAll} />
+                }
+              >
+                {allCollapsed ? <ChevronsUpDown className="size-4" /> : <ChevronsDownUp className="size-4" />}
+              </TooltipTrigger>
+              <TooltipContent>{allCollapsed ? t.nav.expandAll : t.nav.collapseAll}</TooltipContent>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -127,7 +177,13 @@ export function Sidebar({
           ) : null}
           {data.accounts.map((account) => (
             <div key={account.id}>
-              <div className="flex items-center gap-1.5 px-2 pb-1 text-xs font-medium text-muted-foreground">
+              <button
+                type="button"
+                onClick={() => toggleAccount(account.id)}
+                className="flex w-full items-center gap-1 rounded-md px-1 pb-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                aria-expanded={!collapsed[account.id]}
+              >
+                {collapsed[account.id] ? <ChevronRight className="size-3 shrink-0" /> : <ChevronDown className="size-3 shrink-0" />}
                 <span className="truncate" title={account.email}>
                   {account.displayName || account.email}
                 </span>
@@ -140,40 +196,44 @@ export function Sidebar({
                     <TooltipContent className="max-w-xs">{account.syncError ?? t.nav.syncError}</TooltipContent>
                   </Tooltip>
                 ) : null}
-              </div>
-              {account.folders.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">{t.nav.fetchingFolders}</div> : null}
-              <ul className="space-y-0.5">
-                {account.folders
-                  .filter((f) => !f.noSelect || f.depth === 0)
-                  .map((folder) => {
-                    const Icon = ROLE_ICONS[folder.role] ?? Folder;
-                    const active = params.accountId === account.id && params.folderId === folder.id;
-                    const label = folder.role !== "other" && folder.depth === 0 ? (roleLabels[folder.role] ?? folder.name) : folder.name;
-                    return (
-                      <li key={folder.id}>
-                        <Link
-                          href={`/mail/${account.id}/${folder.id}`}
-                          onClick={onNavigate}
-                          aria-disabled={folder.noSelect}
-                          className={cn(
-                            "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent",
-                            active && "bg-sidebar-accent font-medium",
-                            folder.noSelect && "pointer-events-none opacity-60",
-                          )}
-                          style={{ paddingLeft: `${8 + Math.min(folder.depth, 4) * 12}px` }}
-                        >
-                          <Icon className="size-4 shrink-0 text-muted-foreground" />
-                          <span className="min-w-0 flex-1 truncate">{label}</span>
-                          {folder.unreadCount > 0 ? (
-                            <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">
-                              {folder.unreadCount > 999 ? "999+" : folder.unreadCount}
-                            </Badge>
-                          ) : null}
-                        </Link>
-                      </li>
-                    );
-                  })}
-              </ul>
+              </button>
+              {!collapsed[account.id] ? (
+                <>
+                  {account.folders.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">{t.nav.fetchingFolders}</div> : null}
+                  <ul className="space-y-0.5">
+                    {account.folders
+                      .filter((f) => !f.noSelect || f.depth === 0)
+                      .map((folder) => {
+                        const Icon = ROLE_ICONS[folder.role] ?? Folder;
+                        const active = params.accountId === account.id && params.folderId === folder.id;
+                        const label = folder.role !== "other" && folder.depth === 0 ? (roleLabels[folder.role] ?? folder.name) : folder.name;
+                        return (
+                          <li key={folder.id}>
+                            <Link
+                              href={`/mail/${account.id}/${folder.id}`}
+                              onClick={onNavigate}
+                              aria-disabled={folder.noSelect}
+                              className={cn(
+                                "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent",
+                                active && "bg-sidebar-accent font-medium",
+                                folder.noSelect && "pointer-events-none opacity-60",
+                              )}
+                              style={{ paddingLeft: `${8 + Math.min(folder.depth, 4) * 12}px` }}
+                            >
+                              <Icon className="size-4 shrink-0 text-muted-foreground" />
+                              <span className="min-w-0 flex-1 truncate">{label}</span>
+                              {folder.unreadCount > 0 ? (
+                                <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">
+                                  {folder.unreadCount > 999 ? "999+" : folder.unreadCount}
+                                </Badge>
+                              ) : null}
+                            </Link>
+                          </li>
+                        );
+                      })}
+                  </ul>
+                </>
+              ) : null}
             </div>
           ))}
         </nav>
