@@ -15,6 +15,7 @@ import { SemanticSearchDialog } from "@/components/mail/semantic-search-dialog";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api-client";
 import type { MessageDetail, MessageListItem } from "@/lib/api-types";
+import { useT } from "@/lib/locale-context";
 import { formatAddrList, forwardHeader, forwardSubject, quoteText, replyAllRecipients, replySubject, stripHtml } from "@/lib/quote";
 
 /** 文件夹页面的客户端外壳：注入操作工具栏、写信对话框、自动已读。 */
@@ -33,6 +34,7 @@ export function FolderWorkspace({
   const router = useRouter();
   const pathname = usePathname();
   const queryClient = useQueryClient();
+  const t = useT();
   const { data: sidebar } = useQuery({ queryKey: ["sidebar"], queryFn: api.sidebar });
   const folders = sidebar?.accounts.find((a) => a.id === accountId)?.folders ?? [];
 
@@ -139,7 +141,7 @@ export function FolderWorkspace({
         onSemanticSearch={(q) => setSemantic({ open: true, query: q })}
         listHeaderExtra={
           <Button size="sm" onClick={() => openCompose()}>
-            <PenSquare className="size-4" /> 写邮件
+            <PenSquare className="size-4" /> {t.list.compose}
           </Button>
         }
         viewToolbar={(m) => (
