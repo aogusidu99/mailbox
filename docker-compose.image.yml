@@ -1,0 +1,7 @@
+# 叠加文件：用 GitHub Actions 预构建好的镜像，而不是在服务器上本地构建。
+# 服务器上（内存小、构建吃力）推荐用这个：
+#   docker compose -f docker-compose.yml -f docker-compose.image.yml up -d --pull always --no-build
+# 更新到新版本时同样这条命令即可（会拉最新镜像并重启）。
+services:
+  app:
+    image: ghcr.io/aogusidu99/mailbox:latest
