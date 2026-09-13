@@ -53,6 +53,7 @@ export function MessageList({
   onRefresh,
   refreshing,
   headerExtra,
+  onServerSearch,
 }: {
   accountId: string;
   folderId: string;
@@ -62,9 +63,11 @@ export function MessageList({
   onRefresh?: () => void;
   refreshing?: boolean;
   headerExtra?: React.ReactNode;
+  onServerSearch?: (q: string) => Promise<void>;
 }) {
   const [filters, setFilters] = useState<ListFilters>({ q: "", unread: false, flagged: false });
   const q = useDebounced(filters.q, 300);
+  const [serverSearching, setServerSearching] = useState(false);
   const filterKey = { q, unread: filters.unread, flagged: filters.flagged, category: filters.category };
 
   const query = useInfiniteQuery({
@@ -132,6 +135,23 @@ export function MessageList({
           {filters.category ? (
             <Button size="xs" variant="default" onClick={() => setFilters((f) => ({ ...f, category: undefined }))}>
               {categoryLabel(filters.category)} ×
+            </Button>
+          ) : null}
+          {q && onServerSearch ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={serverSearching}
+              onClick={async () => {
+                setServerSearching(true);
+                try {
+                  await onServerSearch(q);
+                } finally {
+                  setServerSearching(false);
+                }
+              }}
+            >
+              {serverSearching ? <Loader2 className="size-3 animate-spin" /> : null} 在服务器上搜索
             </Button>
           ) : null}
         </div>

@@ -20,6 +20,7 @@ import { fetchPendingBodies, syncAccount, syncFolderById } from "@/server/sync/e
  * 初次同步 → 正文拉取 → 服务器端变化（标记 / 新邮件 / 删除）的增量同步。
  */
 
+// 端口段：11430–11529（outbox.test.ts 用 11600–11699）
 const PORT = 11430 + Math.floor(Math.random() * 100);
 
 /** 真实邮件里非 ASCII 主题按 RFC 2047 编码，正文用 base64 传输编码 */

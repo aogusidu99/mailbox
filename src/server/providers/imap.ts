@@ -426,6 +426,45 @@ export class ImapProvider implements MailProvider {
     }
   }
 
+  async searchUids(folder: string, query: string): Promise<number[]> {
+    const client = this.requireClient();
+    const lock = await client.getMailboxLock(folder, { readOnly: true });
+    try {
+      if (client.mailbox && client.mailbox.exists === 0) return [];
+      const q = query.trim();
+      if (!q) return [];
+      // Gmail 支持原生搜索语法；其它服务器用 TEXT（主题 + 正文 + 头部）
+      const result = this.caps.gmail ? await client.search({ gmraw: q }, { uid: true }) : await client.search({ text: q }, { uid: true });
+      return result ? [...result].sort((a, b) => b - a) : [];
+    } finally {
+      lock.release();
+    }
+  }
+
+  async *fetchByUids(folder: string, uids: number[]): AsyncIterable<MessageEnvelope> {
+    if (uids.length === 0) return;
+    const client = this.requireClient();
+    const lock = await client.getMailboxLock(folder, { readOnly: true });
+    try {
+      const query = {
+        uid: true,
+        flags: true,
+        envelope: true,
+        internalDate: true,
+        size: true,
+        bodyStructure: true,
+        threadId: this.caps.gmail,
+        labels: this.caps.gmail,
+        headers: ["references", "in-reply-to", "list-unsubscribe", "list-unsubscribe-post", "message-id"],
+      };
+      for await (const msg of client.fetch([...uids].sort((a, b) => a - b), query, { uid: true })) {
+        yield this.toEnvelope(msg);
+      }
+    } finally {
+      lock.release();
+    }
+  }
+
   async fetchBody(folder: string, uid: number): Promise<ParsedMessage> {
     const client = this.requireClient();
     const lock = await client.getMailboxLock(folder, { readOnly: true });

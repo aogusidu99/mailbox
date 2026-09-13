@@ -4,7 +4,7 @@ import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
 import { migrate as migratePg } from "drizzle-orm/node-postgres/migrator";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { migrate as migratePglite } from "drizzle-orm/pglite/migrator";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { Pool } from "pg";
 import { getEnv } from "@/env";
@@ -24,6 +24,23 @@ export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
 export type DbHandle =
   | { kind: "pglite"; db: Db; client: PGlite; close(): Promise<void> }
   | { kind: "postgres"; db: Db; pool: Pool; close(): Promise<void> };
+
+/** 递归把目录改成可写（只在 Windows 需要；其它平台无害）。 */
+function ensureWritableTree(root: string): void {
+  if (process.platform !== "win32") return;
+  const stack = [root];
+  while (stack.length) {
+    const dir = stack.pop()!;
+    try {
+      if ((statSync(dir).mode & 0o200) === 0) chmodSync(dir, 0o755);
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.isDirectory()) stack.push(path.join(dir, entry.name));
+      }
+    } catch {
+      /* 目录可能正在被删除，忽略 */
+    }
+  }
+}
 
 export interface CreateDbOptions {
   /** PostgreSQL 连接串；为空则用 PGlite */
@@ -48,7 +65,13 @@ export async function createDbHandle(opts: CreateDbOptions = {}): Promise<DbHand
   if (opts.pgliteDataDir) {
     // turbopackIgnore：数据目录来自环境变量，避免 Next 构建时把整个项目纳入文件追踪
     mkdirSync(/*turbopackIgnore: true*/ opts.pgliteDataDir, { recursive: true });
-    client = new PGlite(opts.pgliteDataDir);
+    // Windows 上 PGlite 数据目录会被打上「只读」属性（stat mode 变成 444），emscripten 虚拟文件系统据此
+    // 判定目录不可写，Postgres 就无法创建/删除 postmaster.pid（报 Permission denied）。启动前清掉整棵目录树的只读位。
+    ensureWritableTree(opts.pgliteDataDir);
+    // 上次进程被强制结束时会留下 postmaster.pid；本应用只有一个进程打开该目录，残留的锁文件一定是陈旧的，直接清掉。
+    rmSync(/*turbopackIgnore: true*/ path.join(opts.pgliteDataDir, "postmaster.pid"), { force: true });
+    // PGLITE_DEBUG=1 时打印 Postgres 启动日志，便于排查「failed to initialize」类问题
+    client = new PGlite(opts.pgliteDataDir, { debug: process.env.PGLITE_DEBUG ? 1 : 0 });
   } else {
     client = new PGlite();
   }
@@ -57,7 +80,7 @@ export async function createDbHandle(opts: CreateDbOptions = {}): Promise<DbHand
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `PGlite 数据库无法打开（${message}）。如果是进程被强制结束导致数据损坏，可把 ${opts.pgliteDataDir ?? "内存库"} 目录改名后重启，应用会重新初始化并重新同步邮件。`,
+      `PGlite 数据库无法打开（${message}）。可尝试删除 ${opts.pgliteDataDir ?? "内存库"} 下的 postmaster.pid 后重启；若仍失败，把该目录改名后重启，应用会重新初始化并重新同步邮件。`,
     );
   }
   const db = drizzlePglite({ client, schema });

@@ -22,6 +22,7 @@ export function MailWorkspace({
   listHeaderExtra,
   viewToolbar,
   onOpenMessage,
+  onServerSearch,
 }: {
   accountId: string;
   folderId: string;
@@ -30,6 +31,7 @@ export function MailWorkspace({
   listHeaderExtra?: React.ReactNode;
   viewToolbar?: Parameters<typeof MessageView>[0]["toolbar"];
   onOpenMessage?: (item: MessageListItem) => void;
+  onServerSearch?: (q: string) => Promise<void>;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -79,6 +81,7 @@ export function MailWorkspace({
       onRefresh={refresh}
       refreshing={refreshing}
       headerExtra={listHeaderExtra}
+      onServerSearch={onServerSearch}
     />
   );
 

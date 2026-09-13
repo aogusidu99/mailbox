@@ -90,6 +90,30 @@ export interface MessageDetail extends MessageListItem {
   listUnsubscribePost: string | null;
 }
 
+export interface UploadedAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
+/** 写信 / 存草稿的提交内容 */
+export interface ComposePayload {
+  to: string;
+  cc?: string;
+  bcc?: string;
+  subject: string;
+  text: string;
+  attachments: UploadedAttachment[];
+  /** 回复的原邮件（本地 id） */
+  inReplyToMessageId?: string;
+  /** 转发的原邮件（本地 id） */
+  forwardOfMessageId?: string;
+  includeOriginalAttachments?: boolean;
+  /** 正在编辑的草稿（本地 id），发送或再次保存后删除旧草稿 */
+  draftMessageId?: string;
+}
+
 export type RealtimeEventDto =
   | { type: "hello" }
   | { type: "folder"; accountId: string; folderId?: string; folderPath?: string }

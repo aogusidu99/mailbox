@@ -252,7 +252,12 @@ M0 验证记录（2026-09-12）：pg-boss 通过自定义 `db` 适配器在 PGli
 M1 验证记录（2026-09-13）：IMAP 提供方（imapflow）+ 同步引擎 + IDLE 监听 + 添加邮箱向导 + 三栏界面完成。
 `bun test` 新增 hoodiecrow（本地内存 IMAP 服务器）集成测试覆盖初次同步 / 正文拉取 / 标记变化 / 新邮件 / 删除；
 `bun run e2e`（Playwright 驱动本机 Edge）覆盖登录 → 向导添加邮箱 → 测试连接 → 同步 → 列表 → 阅读正文与附件。
-注意：pg-boss 队列名不能含冒号；PGlite 数据目录在进程被强制结束后可能损坏，改名后重启即可重建。
+注意：pg-boss 队列名不能含冒号；Windows 上 PGlite 数据目录会被打上只读属性，Node 里的 emscripten 文件系统据此判定目录不可写，
+Postgres 无法创建/删除 `postmaster.pid`（报 Permission denied，Bun 不受影响）。应用启动时会递归清除只读位并删除陈旧锁文件（`src/db/index.ts`）。
+
+M2 验证记录（2026-09-13）：outbox 回放（已读/星标/归档/移动/删除/追加草稿）、写信/回复/全部回复/转发（SMTP + MailComposer）、
+草稿与已发送副本 APPEND 到服务器、服务器端搜索（IMAP SEARCH 回填本地）完成。
+`bun test` 新增 outbox 集成测试与 compose 单元测试；`bun run e2e` 新增 m2 用例：回复经假 SMTP 发出（校验 In-Reply-To）、星标、归档。
 
 需要你确认的 4 个决定：
 

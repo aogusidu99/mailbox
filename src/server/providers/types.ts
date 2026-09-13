@@ -118,6 +118,10 @@ export interface MailProvider {
   fetchFlags(folder: string, opts: { sinceModseq?: bigint; fromUid?: number }): AsyncIterable<FlagChange>;
   /** 当前文件夹内 uid >= fromUid 的全部 UID（用于检测删除 / 移出） */
   listUids(folder: string, fromUid?: number): Promise<number[]>;
+  /** 服务器端全文搜索（IMAP SEARCH TEXT），返回匹配的 UID */
+  searchUids(folder: string, query: string): Promise<number[]>;
+  /** 按 UID 列表拉取信封（服务器搜索结果回填本地缓存用） */
+  fetchByUids(folder: string, uids: number[]): AsyncIterable<MessageEnvelope>;
   fetchBody(folder: string, uid: number): Promise<ParsedMessage>;
   fetchAttachment(folder: string, uid: number, part: string): Promise<{ content: Buffer; mimeType?: string; filename?: string }>;
   applyOperation(op: MailOperation): Promise<OperationResult>;
