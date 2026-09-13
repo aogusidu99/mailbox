@@ -236,9 +236,14 @@ export const aiAnnotations = pgTable("ai_annotations", {
 
 export const aiUsage = pgTable("ai_usage", {
   id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
   accountId: uuid("account_id").references(() => mailAccounts.id, { onDelete: "set null" }),
+  /** 任务等级：triage / summary / extract / draft / rules / chat / embedding */
   feature: text("feature").notNull(),
+  provider: text("provider").notNull().default("anthropic"),
   model: text("model").notNull(),
+  /** 若发生降级，记录原本想用的模型 */
+  fallbackFrom: text("fallback_from"),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
   cacheReadTokens: integer("cache_read_tokens").notNull().default(0),
@@ -246,6 +251,70 @@ export const aiUsage = pgTable("ai_usage", {
   costUsd: doublePrecision("cost_usd").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** 用户级 AI 配置（多厂商、候选池、按任务等级路由）；API Key 单独加密存储 */
+export const aiSettings = pgTable("ai_settings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
+  data: jsonb("data").$type<AiSettingsData>().notNull(),
+  /** 加密 JSON：{ [providerId]: apiKey } */
+  providerKeysEnc: text("provider_keys_enc"),
+  ...timestamps,
+});
+
+/** 每日摘要缓存 */
+export const aiDigests = pgTable(
+  "ai_digests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** YYYY-MM-DD（本地日期） */
+    day: text("day").notNull(),
+    content: text("content").notNull(),
+    model: text("model").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("ai_digests_user_day_uq").on(t.userId, t.day)],
+);
+
+export type AiRole = "triage" | "summary" | "extract" | "draft" | "rules" | "chat" | "embedding";
+export type AiEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export interface AiRoleConfig {
+  provider?: string;
+  model?: string;
+  effort?: AiEffort;
+}
+export interface AiRemoteModel {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt?: number;
+}
+export interface AiCustomProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKeyHint?: string;
+}
+export interface AiSettingsData {
+  defaultProvider: string;
+  defaultModel: string;
+  /** 各厂商的候选池（从 /models 拉取后勾选） */
+  candidates: Record<string, AiRemoteModel[]>;
+  /** 按任务等级覆盖；留空继承默认 */
+  roles: Partial<Record<AiRole, AiRoleConfig>>;
+  preset: "quality" | "balanced" | "economy" | "custom";
+  customProviders: AiCustomProvider[];
+  /** 分类结果写回服务器：Gmail 标签 / IMAP 复制到 AI/<类别> 文件夹 */
+  writeBack: { gmailLabels: boolean; imapFolders: boolean };
+  /** 自动分析范围：只收件箱 / 全部文件夹 */
+  autoTriageScope: "inbox" | "all";
+}
 
 // ---------- 推导类型 ----------
 

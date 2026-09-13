@@ -85,3 +85,40 @@ export async function searchOnServerAction(accountId: string, folderId: string, 
     return searchOnServer(user.id, accountId, folderId, q);
   });
 }
+
+// ---------- AI ----------
+
+export async function aiDraftReplyAction(messageId: string, instructions?: string) {
+  return run(async () => {
+    const user = await requireUser();
+    const { draftReply } = await import("@/server/ai/assist");
+    return draftReply(user.id, messageId, instructions);
+  });
+}
+
+export async function aiAnalyzeAction(messageId: string) {
+  return run(async () => {
+    const user = await requireUser();
+    const { analyzeNow } = await import("@/server/ai/assist");
+    const r = await analyzeNow(user.id, messageId);
+    if (!r) throw new Error("无法分析这封邮件");
+    return { category: r.category, priority: r.priority, summary: r.summary };
+  });
+}
+
+export async function aiSummarizeAction(messageId: string) {
+  return run(async () => {
+    const user = await requireUser();
+    const { summarizeMessage } = await import("@/server/ai/assist");
+    return summarizeMessage(user.id, messageId);
+  });
+}
+
+export async function refreshDigestAction(day: string) {
+  return run(async () => {
+    const user = await requireUser();
+    const { dailyDigest } = await import("@/server/ai/assist");
+    const r = await dailyDigest(user.id, day, { refresh: true });
+    return { content: r.content };
+  });
+}

@@ -13,12 +13,14 @@ import {
   Send,
   Settings,
   ShieldAlert,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api-client";
@@ -77,15 +79,25 @@ export function Sidebar({
             </TooltipTrigger>
             <TooltipContent>添加邮箱</TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={<Link href="/mail/accounts" onClick={onNavigate} className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" />}
-            >
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<button type="button" className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" aria-label="设置" />}>
               <Settings className="size-4" />
-            </TooltipTrigger>
-            <TooltipContent>管理邮箱与设置</TooltipContent>
-          </Tooltip>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem render={<Link href="/mail/accounts" onClick={onNavigate} />}>邮箱管理</DropdownMenuItem>
+              <DropdownMenuItem render={<Link href="/mail/settings/ai" onClick={onNavigate} />}>AI 设置</DropdownMenuItem>
+              <DropdownMenuItem render={<Link href="/mail/digest" onClick={onNavigate} />}>每日摘要</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
+      </div>
+      <div className="flex gap-1 border-b px-2 py-1.5 text-xs">
+        <Link href="/mail/digest" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
+          <Sparkles className="size-3.5" /> 每日摘要
+        </Link>
+        <Link href="/mail/settings/ai" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
+          <Settings className="size-3.5" /> AI 设置
+        </Link>
       </div>
 
       <ScrollArea className="flex-1">

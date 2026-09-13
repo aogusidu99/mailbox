@@ -517,6 +517,12 @@ export class ImapProvider implements MailProvider {
           if (res && res.uidMap) for (const [from, to] of res.uidMap) uidMap[from] = to;
           return { uidMap };
         }
+        case "copy": {
+          const res = await client.messageCopy(op.uids, op.toFolder, { uid: true });
+          const uidMap: Record<number, number> = {};
+          if (res && res.uidMap) for (const [from, to] of res.uidMap) uidMap[from] = to;
+          return { uidMap };
+        }
         case "delete":
           await client.messageDelete(op.uids, { uid: true });
           return {};

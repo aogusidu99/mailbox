@@ -259,6 +259,12 @@ M2 验证记录（2026-09-13）：outbox 回放（已读/星标/归档/移动/�
 草稿与已发送副本 APPEND 到服务器、服务器端搜索（IMAP SEARCH 回填本地）完成。
 `bun test` 新增 outbox 集成测试与 compose 单元测试；`bun run e2e` 新增 m2 用例：回复经假 SMTP 发出（校验 In-Reply-To）、星标、归档。
 
+M3 验证记录（2026-09-13）：多厂商 AI 适配层（Anthropic 官方 SDK + OpenAI 兼容工厂：OpenAI / Gemini / DeepSeek / 自定义端点）、
+按任务等级路由与同厂商候选池降级、用量与成本记录、triage（分类/优先级/摘要/待办 → Gmail 标签写回）、AI 起草回复、
+按需分析、每日摘要页、AI 设置页（Key 加密、刷新模型列表、候选池、预设、测试连接、回填）。
+`bun test` 新增假 OpenAI 兼容服务（Bun.serve）驱动的适配器 / 设置 / triage 集成测试；`bun run e2e` 新增 m3 用例（设置页配置假厂商 → AI 分析 → AI 起草）。
+说明：Anthropic 的服务端 refusal fallback 未启用，遇到 refusal 时走本地候选池降级；Batch API 回填未实现，回填走普通队列（串行、可限流）。
+
 需要你确认的 4 个决定：
 
 1. **首批接入哪些邮箱**：Gmail（应用专用密码 vs OAuth）、QQ、163、Outlook？

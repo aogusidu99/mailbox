@@ -18,7 +18,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={client}>
       <TooltipProvider>{children}</TooltipProvider>
-      <Toaster position="top-center" richColors />
+      {/* 放右下角，避免遮住顶部工具栏 */}
+      <Toaster position="bottom-right" richColors />
     </QueryClientProvider>
   );
 }

@@ -80,6 +80,7 @@ export interface ParsedMessage {
 export type MailOperation =
   | { type: "set_flags"; folder: string; uids: number[]; add?: string[]; remove?: string[] }
   | { type: "move"; folder: string; uids: number[]; toFolder: string }
+  | { type: "copy"; folder: string; uids: number[]; toFolder: string }
   | { type: "delete"; folder: string; uids: number[] }
   | { type: "append"; folder: string; mime: Uint8Array; flags?: string[]; date?: Date }
   | { type: "set_labels"; folder: string; uids: number[]; add?: string[]; remove?: string[] }

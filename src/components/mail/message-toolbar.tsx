@@ -1,15 +1,15 @@
 "use client";
 
-import { Archive, FolderInput, Forward, Inbox, Loader2, Mail, MailOpen, Pencil, Reply, ReplyAll, ShieldAlert, Star, Trash2 } from "lucide-react";
+import { Archive, FolderInput, Forward, Inbox, Loader2, Mail, MailOpen, Pencil, Reply, ReplyAll, ShieldAlert, Sparkles, Star, Trash2, Wand2 } from "lucide-react";
 import { useTransition } from "react";
 import { toast } from "sonner";
-import { archiveAction, flagAction, junkAction, markReadAction, moveAction, notJunkAction, trashAction } from "@/app/mail/actions";
+import { aiAnalyzeAction, archiveAction, flagAction, junkAction, markReadAction, moveAction, notJunkAction, trashAction } from "@/app/mail/actions";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { MessageDetail, SidebarFolder } from "@/lib/api-types";
 
-export type ReplyKind = "reply" | "replyAll" | "forward" | "editDraft";
+export type ReplyKind = "reply" | "replyAll" | "forward" | "editDraft" | "aiReply";
 
 function IconButton({ label, onClick, disabled, children }: { label: string; onClick?: () => void; disabled?: boolean; children: React.ReactNode }) {
   return (
@@ -70,6 +70,12 @@ export function MessageToolbar({
           </IconButton>
           <IconButton label="转发" onClick={() => onCompose("forward")}>
             <Forward className="size-4" />
+          </IconButton>
+          <IconButton label="AI 起草回复" onClick={() => onCompose("aiReply")}>
+            <Sparkles className="size-4" />
+          </IconButton>
+          <IconButton label="AI 分析" disabled={pending} onClick={() => act(() => aiAnalyzeAction(message.id), "changed", "已完成 AI 分析")}>
+            <Wand2 className="size-4" />
           </IconButton>
         </>
       )}

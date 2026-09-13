@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { FAKE_USER, startFakeMailServers, type FakeMailServers } from "./fake-mail-server";
-import { login } from "./helpers";
+import { FAKE_IMAP_PORT, FAKE_PASS, FAKE_SMTP_PORT, FAKE_USER, startFakeMailServers, type FakeMailServers } from "./fake-mail-server";
+import { addFakeAccount, login, removeAccountIfExists, waitForInbox } from "./helpers";
 
 /**
  * M2 验收：回复并通过 SMTP 发送、星标、归档。
- * 前置：m1 用例已把假邮箱添加进应用（本文件在 m1 之后运行）。
+ * 每次都重新添加假邮箱，保证从干净状态开始。
  */
 
 let servers: FakeMailServers;
@@ -19,15 +19,10 @@ test.afterAll(async () => {
 
 test("回复邮件通过 SMTP 发出，星标与归档同步", async ({ page }) => {
   await login(page);
-  const sidebar = await page.request.get("/api/mail/sidebar");
-  const data = (await sidebar.json()) as { accounts: Array<{ id: string; email: string; folders: Array<{ id: string; role: string }> }> };
-  const account = data.accounts.find((a) => a.email === FAKE_USER);
-  test.skip(!account, "需要先运行 m1 用例添加假邮箱");
-  const inbox = account!.folders.find((f) => f.role === "inbox")!;
-  await page.goto(`/mail/${account!.id}/${inbox.id}`);
-
-  // 触发一次同步，确保假服务器重启后状态一致
-  await page.getByRole("button", { name: "刷新" }).click();
+  await removeAccountIfExists(page, FAKE_USER);
+  await addFakeAccount(page, { email: FAKE_USER, password: FAKE_PASS, imapPort: FAKE_IMAP_PORT, smtpPort: FAKE_SMTP_PORT });
+  const { accountId, folderId } = await waitForInbox(page, FAKE_USER);
+  await page.goto(`/mail/${accountId}/${folderId}`);
 
   const row = page.getByRole("button", { name: /项目周报/ });
   await expect(row).toBeVisible({ timeout: 60_000 });

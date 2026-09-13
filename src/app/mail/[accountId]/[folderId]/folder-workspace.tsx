@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { refreshFolderAction } from "@/app/mail/accounts/actions";
 import { markReadAction, searchOnServerAction } from "@/app/mail/actions";
+import { AiReplyDialog } from "@/components/mail/ai-reply-dialog";
 import { ComposeDialog, type ComposeInitial } from "@/components/mail/compose-dialog";
 import { MailWorkspace } from "@/components/mail/mail-workspace";
 import { MessageToolbar, type ReplyKind } from "@/components/mail/message-toolbar";
@@ -36,6 +37,7 @@ export function FolderWorkspace({
 
   const [compose, setCompose] = useState<{ key: number; open: boolean; initial?: ComposeInitial }>({ key: 0, open: false });
   const openCompose = useCallback((initial?: ComposeInitial) => setCompose((c) => ({ key: c.key + 1, open: true, initial })), []);
+  const [aiReply, setAiReply] = useState<{ open: boolean; message?: MessageDetail }>({ open: false });
 
   const invalidate = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ["messages", accountId] });
@@ -66,9 +68,16 @@ export function FolderWorkspace({
     if (readTimer.current) clearTimeout(readTimer.current);
   }, []);
 
-  const buildCompose = (m: MessageDetail, kind: ReplyKind): ComposeInitial => {
+  const buildCompose = (m: MessageDetail, kind: ReplyKind, aiText?: string): ComposeInitial => {
     const bodyText = m.text?.trim() || (m.html ? stripHtml(m.html) : "");
     switch (kind) {
+      case "aiReply":
+        return {
+          to: formatAddrList(m.replyTo.length ? m.replyTo : m.from),
+          subject: replySubject(m.subject),
+          text: `${aiText ?? ""}${quoteText({ from: m.from, date: m.date, text: m.text, html: m.html })}`,
+          inReplyToMessageId: m.id,
+        };
       case "reply":
         return {
           to: formatAddrList(m.replyTo.length ? m.replyTo : m.from),
@@ -134,7 +143,7 @@ export function FolderWorkspace({
           <MessageToolbar
             message={m}
             folders={folders}
-            onCompose={(kind) => openCompose(buildCompose(m, kind))}
+            onCompose={(kind) => (kind === "aiReply" ? setAiReply({ open: true, message: m }) : openCompose(buildCompose(m, kind)))}
             onRemoved={() => {
               clearSelection();
               void invalidate();
@@ -146,6 +155,14 @@ export function FolderWorkspace({
           />
         )}
       />
+      {aiReply.open && aiReply.message ? (
+        <AiReplyDialog
+          open={aiReply.open}
+          onOpenChange={(open) => setAiReply((s) => ({ ...s, open }))}
+          messageId={aiReply.message.id}
+          onDraft={(text) => openCompose(buildCompose(aiReply.message!, "aiReply", text))}
+        />
+      ) : null}
       {compose.open ? (
         <ComposeDialog
           key={compose.key}

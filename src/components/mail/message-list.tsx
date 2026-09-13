@@ -132,11 +132,19 @@ export function MessageList({
           >
             星标
           </Button>
-          {filters.category ? (
-            <Button size="xs" variant="default" onClick={() => setFilters((f) => ({ ...f, category: undefined }))}>
-              {categoryLabel(filters.category)} ×
-            </Button>
-          ) : null}
+          <select
+            aria-label="按 AI 分类筛选"
+            className="h-6 rounded-md border border-input bg-background px-1.5 text-xs"
+            value={filters.category ?? ""}
+            onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value || undefined }))}
+          >
+            <option value="">全部分类</option>
+            {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
+              <option key={k} value={k}>
+                {v}
+              </option>
+            ))}
+          </select>
           {q && onServerSearch ? (
             <Button
               size="xs"
