@@ -38,15 +38,76 @@ export interface CompatibleInit {
   useMaxCompletionTokens?: boolean;
   /** 是否发送 reasoning_effort */
   supportsReasoningEffort?: boolean;
+  /** JSON Schema 方言：gemini 只接受 OpenAPI 子集，需要清洗 */
+  schemaDialect?: SchemaDialect;
+}
+
+export type SchemaDialect = "generic" | "gemini";
+
+/** Gemini 函数声明 / 结构化输出接受的 Schema 关键字白名单 */
+const GEMINI_KEYS = new Set(["type", "description", "enum", "properties", "required", "items", "nullable", "format", "anyOf", "minimum", "maximum", "minItems", "maxItems"]);
+/** 所有厂商都不需要的元信息 */
+const DROP_ALWAYS = new Set(["$schema", "default", "examples", "title", "$id", "$comment"]);
+
+/**
+ * 清洗 JSON Schema，让 zod / 手写的 schema 能被各家兼容端点接受：
+ * - 去掉 $schema / default / examples 等元信息；
+ * - gemini：只保留白名单关键字，`type: ["string","null"]` 与 `anyOf: [..., {type:"null"}]` 改写成 nullable。
+ */
+export function sanitizeJsonSchema(schema: unknown, dialect: SchemaDialect = "generic"): unknown {
+  if (Array.isArray(schema)) return schema.map((s) => sanitizeJsonSchema(s, dialect));
+  if (!schema || typeof schema !== "object") return schema;
+  const src = schema as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+
+  // type 数组（["string","null"]）→ 单一 type + nullable
+  let type = src.type;
+  let nullable = src.nullable === true;
+  if (Array.isArray(type)) {
+    const nonNull = type.filter((t) => t !== "null");
+    if (nonNull.length < type.length) nullable = true;
+    type = nonNull.length === 1 ? nonNull[0] : nonNull.length === 0 ? undefined : nonNull;
+  }
+
+  // anyOf 里只是「某类型或 null」→ 拍平成该类型 + nullable
+  if (Array.isArray(src.anyOf)) {
+    const branches = src.anyOf as Array<Record<string, unknown>>;
+    const nonNull = branches.filter((b) => b?.type !== "null");
+    if (nonNull.length < branches.length) nullable = true;
+    if (nonNull.length === 1 && dialect === "gemini") {
+      const flat = sanitizeJsonSchema({ ...nonNull[0], description: src.description ?? nonNull[0].description }, dialect) as Record<string, unknown>;
+      if (nullable) flat.nullable = true;
+      return flat;
+    }
+  }
+
+  for (const [key, value] of Object.entries(src)) {
+    if (DROP_ALWAYS.has(key)) continue;
+    if (dialect === "gemini" && !GEMINI_KEYS.has(key)) continue;
+    if (key === "type") continue; // 下面统一写
+    if (key === "properties" && value && typeof value === "object") {
+      out.properties = Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, sanitizeJsonSchema(v, dialect)]));
+    } else if (key === "items" || key === "anyOf" || key === "oneOf" || key === "allOf") {
+      out[key] = sanitizeJsonSchema(value, dialect);
+    } else {
+      out[key] = value;
+    }
+  }
+  if (type !== undefined) out.type = type;
+  if (nullable) out.nullable = true;
+  return out;
 }
 
 function trimBase(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
+/** 各家错误体格式不一：OpenAI `{error:{message}}`，Gemini 兼容端点是数组 `[{error:{message}}]`，也有纯 `{message}` */
 async function readError(res: Response): Promise<string> {
   try {
-    const body = (await res.json()) as { error?: { message?: string } | string; message?: string };
+    const raw = (await res.json()) as unknown;
+    const body = (Array.isArray(raw) ? raw[0] : raw) as { error?: { message?: string } | string; message?: string } | undefined;
+    if (!body) return `${res.status} ${res.statusText}`;
     if (typeof body.error === "string") return body.error;
     return body.error?.message || body.message || `${res.status} ${res.statusText}`;
   } catch {
@@ -80,7 +141,12 @@ interface ChatCompletion {
   model?: string;
   choices: Array<{
     finish_reason?: string;
-    message: { content?: string | null; refusal?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> };
+    message: {
+      content?: string | null;
+      refusal?: string | null;
+      /** extra_content：Gemini 在这里返回 thought_signature，回传时必须带上 */
+      tool_calls?: Array<{ id: string; function: { name: string; arguments: string }; extra_content?: unknown }>;
+    };
   }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
 }
@@ -134,7 +200,7 @@ export function createOpenAICompatibleAdapter(init: CompatibleInit): ProviderAda
     if (mode === "schema" && opts.schema) {
       body.response_format = {
         type: "json_schema",
-        json_schema: { name: opts.schemaName ?? "result", schema: z.toJSONSchema(opts.schema, { target: "draft-7" }), strict: false },
+        json_schema: { name: opts.schemaName ?? "result", schema: sanitizeJsonSchema(z.toJSONSchema(opts.schema, { target: "draft-7" }), init.schemaDialect ?? "generic"), strict: false },
       };
     } else if (mode === "json_object") {
       body.response_format = { type: "json_object" };
@@ -238,7 +304,12 @@ export function createOpenAICompatibleAdapter(init: CompatibleInit): ProviderAda
           messages.push({
             role: "assistant",
             content: m.content || null,
-            tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.input ?? {}) } })),
+            tool_calls: m.toolCalls.map((c) => ({
+              id: c.id,
+              type: "function",
+              function: { name: c.name, arguments: JSON.stringify(c.input ?? {}) },
+              ...(c.extra ? { extra_content: c.extra } : {}),
+            })),
           });
         } else {
           messages.push({ role: m.role, content: m.content });
@@ -247,7 +318,10 @@ export function createOpenAICompatibleAdapter(init: CompatibleInit): ProviderAda
       const body: Record<string, unknown> = {
         model: opts.model,
         messages,
-        tools: opts.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.inputSchema } })),
+        tools: opts.tools.map((t) => ({
+          type: "function",
+          function: { name: t.name, description: t.description, parameters: sanitizeJsonSchema(t.inputSchema, init.schemaDialect ?? "generic") },
+        })),
       };
       const max = opts.maxTokens ?? 8192;
       if (init.useMaxCompletionTokens) body.max_completion_tokens = max;
@@ -264,7 +338,7 @@ export function createOpenAICompatibleAdapter(init: CompatibleInit): ProviderAda
         } catch {
           input = {};
         }
-        return { id: c.id, name: c.function.name, input };
+        return { id: c.id, name: c.function.name, input, extra: c.extra_content };
       });
       const finishReason: ChatWithToolsResult["finishReason"] =
         toolCalls.length > 0 ? "tool_calls" : choice.finish_reason === "length" ? "length" : choice.message.refusal ? "refusal" : "stop";

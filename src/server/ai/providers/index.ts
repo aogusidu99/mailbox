@@ -38,6 +38,7 @@ const google = createOpenAICompatibleAdapter({
     { id: "gemini-embedding-001", name: "Gemini Embedding 001" },
   ],
   supportsReasoningEffort: true,
+  schemaDialect: "gemini",
   async fetchModels(apiKey) {
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(apiKey)}`, {
       signal: AbortSignal.timeout(30_000),

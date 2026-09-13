@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { z } from "zod";
-import { createOpenAICompatibleAdapter, extractJson } from "@/server/ai/providers/openai-compatible";
+import { createOpenAICompatibleAdapter, extractJson, sanitizeJsonSchema } from "@/server/ai/providers/openai-compatible";
 import { AiProviderError } from "@/server/ai/providers/types";
 import { startFakeOpenAI, type FakeOpenAI } from "./helpers/fake-openai";
 
@@ -68,6 +68,29 @@ describe("OpenAI 兼容适配器", () => {
     expect(r.vectors[0]).toHaveLength(8);
     expect(r.vectors[0]).not.toEqual(r.vectors[1]);
     expect(r.usage.inputTokens).toBe(12);
+  });
+
+  test("sanitizeJsonSchema：Gemini 方言去掉不支持的关键字并改写 nullable", () => {
+    const zodSchema = z.object({ dueAt: z.string().max(40).nullable(), items: z.array(z.object({ t: z.string() })).max(8), kind: z.enum(["a", "b"]) });
+    const raw = z.toJSONSchema(zodSchema, { target: "draft-7" });
+    const gemini = sanitizeJsonSchema(raw, "gemini") as Record<string, unknown>;
+    expect(gemini.$schema).toBeUndefined();
+    expect(gemini.additionalProperties).toBeUndefined();
+    const props = gemini.properties as Record<string, Record<string, unknown>>;
+    expect(props.dueAt).toEqual({ type: "string", nullable: true });
+    expect(props.items.maxItems).toBe(8);
+    expect((props.items.items as Record<string, unknown>).additionalProperties).toBeUndefined();
+    expect(props.kind).toEqual({ type: "string", enum: ["a", "b"] });
+
+    const tool = sanitizeJsonSchema({ type: "object", properties: { limit: { type: "integer", minimum: 1, default: 10 }, flag: { type: ["boolean", "null"], default: false } } }, "gemini") as Record<string, unknown>;
+    const tp = tool.properties as Record<string, Record<string, unknown>>;
+    expect(tp.limit).toEqual({ type: "integer", minimum: 1 });
+    expect(tp.flag).toEqual({ type: "boolean", nullable: true });
+
+    const generic = sanitizeJsonSchema(raw, "generic") as Record<string, unknown>;
+    expect(generic.$schema).toBeUndefined();
+    expect(generic.additionalProperties).toBe(false);
+    expect((generic.properties as Record<string, Record<string, unknown>>).dueAt.anyOf).toBeDefined();
   });
 
   test("extractJson 兼容围栏与前后杂文", () => {

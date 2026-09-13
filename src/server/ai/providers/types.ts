@@ -65,9 +65,17 @@ export interface AiToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
+export interface AiToolCall {
+  id: string;
+  name: string;
+  input: unknown;
+  /** 厂商附加数据（如 Gemini 的 thought_signature），回传时必须原样带上 */
+  extra?: unknown;
+}
+
 export type AiChatMessage =
   | AiMessage
-  | { role: "assistant"; content: string; toolCalls: Array<{ id: string; name: string; input: unknown }> }
+  | { role: "assistant"; content: string; toolCalls: AiToolCall[] }
   | { role: "tool"; toolCallId: string; name: string; content: string };
 
 export interface ChatWithToolsOptions {
@@ -84,7 +92,7 @@ export interface ChatWithToolsOptions {
 
 export interface ChatWithToolsResult {
   text: string;
-  toolCalls: Array<{ id: string; name: string; input: unknown }>;
+  toolCalls: AiToolCall[];
   usage: AiUsage;
   model: string;
   finishReason: "stop" | "tool_calls" | "length" | "refusal" | "other";

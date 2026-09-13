@@ -178,7 +178,7 @@ const anthropic: ProviderAdapter = {
         .join("");
       const toolCalls = response.content
         .filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use")
-        .map((b) => ({ id: b.id, name: b.name, input: b.input }));
+        .map((b) => ({ id: b.id, name: b.name, input: b.input as unknown }));
       const finishReason: ChatWithToolsResult["finishReason"] =
         response.stop_reason === "tool_use"
           ? "tool_calls"
