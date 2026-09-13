@@ -20,9 +20,9 @@ const envSchema = z.object({
   /** 邮箱凭据加密主密钥（建议 32 字节 base64/hex；任意 ≥32 字符的口令也可，将做 SHA-256 派生）。 */
   APP_MASTER_KEY: z.string().min(32, "APP_MASTER_KEY 至少 32 个字符"),
 
-  /** 单用户模式：启动时按此账号种子生成管理员。 */
-  ADMIN_EMAIL: z.email(),
-  ADMIN_PASSWORD: z.string().min(8, "ADMIN_PASSWORD 至少 8 个字符"),
+  /** 单用户模式：登录用户名（可填邮箱，也可填普通用户名如 aogusidu99），启动时据此种子生成管理员。 */
+  ADMIN_EMAIL: z.string().min(1, "ADMIN_EMAIL 不能为空"),
+  ADMIN_PASSWORD: z.string().min(1, "ADMIN_PASSWORD 不能为空"),
 
   /** Anthropic API Key（可选）：只作为首次启动的种子，正式以设置页保存的加密 Key 为准。 */
   ANTHROPIC_API_KEY: z.string().min(1).optional(),

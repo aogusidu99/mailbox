@@ -12,7 +12,7 @@ import { verifyPassword } from "@/server/auth/password";
  */
 
 const credentialsSchema = z.object({
-  email: z.email(),
+  email: z.string().min(1),
   password: z.string().min(1),
 });
 
@@ -23,7 +23,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
     Credentials({
       credentials: {
-        email: { label: "邮箱", type: "email" },
+        email: { label: "用户名", type: "text" },
         password: { label: "密码", type: "password" },
       },
       async authorize(raw) {

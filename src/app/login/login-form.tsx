@@ -17,7 +17,7 @@ export function LoginForm() {
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="email">{t.email}</FieldLabel>
-          <Input id="email" name="email" type="email" autoComplete="username" required />
+          <Input id="email" name="email" type="text" autoComplete="username" required />
         </Field>
         <Field>
           <FieldLabel htmlFor="password">{t.password}</FieldLabel>

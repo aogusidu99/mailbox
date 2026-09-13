@@ -50,3 +50,6 @@ next-env.d.ts
 /test-results/
 /playwright-report/
 !.env.docker.example
+
+# 本地个人部署脚本（含服务器 IP，不入库）
+/update-server.bat
