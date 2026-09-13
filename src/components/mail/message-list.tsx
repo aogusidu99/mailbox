@@ -54,6 +54,7 @@ export function MessageList({
   refreshing,
   headerExtra,
   onServerSearch,
+  onSemanticSearch,
 }: {
   accountId: string;
   folderId: string;
@@ -64,6 +65,7 @@ export function MessageList({
   refreshing?: boolean;
   headerExtra?: React.ReactNode;
   onServerSearch?: (q: string) => Promise<void>;
+  onSemanticSearch?: (q: string) => void;
 }) {
   const [filters, setFilters] = useState<ListFilters>({ q: "", unread: false, flagged: false });
   const q = useDebounced(filters.q, 300);
@@ -160,6 +162,11 @@ export function MessageList({
               }}
             >
               {serverSearching ? <Loader2 className="size-3 animate-spin" /> : null} 在服务器上搜索
+            </Button>
+          ) : null}
+          {q && onSemanticSearch ? (
+            <Button size="xs" variant="outline" onClick={() => onSemanticSearch(q)}>
+              语义搜索
             </Button>
           ) : null}
         </div>

@@ -7,14 +7,17 @@ import {
   FileText,
   Folder,
   Inbox,
+  ListChecks,
   Loader2,
   Mail,
+  MessageSquare,
   Plus,
   Send,
   Settings,
   ShieldAlert,
   Sparkles,
   Trash2,
+  Wand2,
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -86,17 +89,24 @@ export function Sidebar({
             <DropdownMenuContent align="end">
               <DropdownMenuItem render={<Link href="/mail/accounts" onClick={onNavigate} />}>邮箱管理</DropdownMenuItem>
               <DropdownMenuItem render={<Link href="/mail/settings/ai" onClick={onNavigate} />}>AI 设置</DropdownMenuItem>
+              <DropdownMenuItem render={<Link href="/mail/settings/rules" onClick={onNavigate} />}>邮件规则</DropdownMenuItem>
               <DropdownMenuItem render={<Link href="/mail/digest" onClick={onNavigate} />}>每日摘要</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
       </div>
-      <div className="flex gap-1 border-b px-2 py-1.5 text-xs">
+      <div className="grid grid-cols-2 gap-0.5 border-b px-2 py-1.5 text-xs">
+        <Link href="/mail/chat" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
+          <MessageSquare className="size-3.5" /> 和邮箱对话
+        </Link>
+        <Link href="/mail/todos" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
+          <ListChecks className="size-3.5" /> 待办
+        </Link>
         <Link href="/mail/digest" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
           <Sparkles className="size-3.5" /> 每日摘要
         </Link>
-        <Link href="/mail/settings/ai" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
-          <Settings className="size-3.5" /> AI 设置
+        <Link href="/mail/settings/rules" onClick={onNavigate} className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-sidebar-accent">
+          <Wand2 className="size-3.5" /> 规则
         </Link>
       </div>
 

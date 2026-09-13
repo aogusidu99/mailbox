@@ -1,8 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Download, ImageOff, Loader2, Paperclip } from "lucide-react";
-import { useState } from "react";
+import { Download, ImageOff, Loader2, MailX, Paperclip } from "lucide-react";
+import { useState, useTransition } from "react";
+import { toast } from "sonner";
+import { unsubscribeAction } from "@/app/mail/actions";
 import { EmailFrame } from "@/components/mail/email-frame";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api-client";
@@ -21,6 +23,21 @@ export function MessageView({
   onLoaded?: (message: MessageDetail) => void;
 }) {
   const [remote, setRemote] = useState(false);
+  const [unsubPending, startUnsub] = useTransition();
+  const unsubscribe = () =>
+    startUnsub(async () => {
+      const r = await unsubscribeAction(messageId);
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      if (r.data.method === "link") {
+        window.open(r.data.url, "_blank", "noopener");
+        toast.info("已打开退订页面，请在新窗口中完成");
+      } else if (r.data.method === "mailto") toast.success(`已向 ${r.data.detail} 发送退订邮件`);
+      else if (r.data.method === "one-click") toast.success(`已向 ${r.data.detail} 发送一键退订请求`);
+      else toast.info("这封邮件没有提供退订方式");
+    });
   const query = useQuery({
     queryKey: ["message", messageId, remote],
     queryFn: async () => {
@@ -66,6 +83,11 @@ export function MessageView({
               {m.cc.length ? <div className="text-xs text-muted-foreground">抄送：{formatAddressList(m.cc)}</div> : null}
               <div className="text-xs text-muted-foreground">{formatFullDate(m.date)}</div>
             </div>
+            {m.listUnsubscribe ? (
+              <Button size="xs" variant="outline" onClick={unsubscribe} disabled={unsubPending} title={m.listUnsubscribe}>
+                {unsubPending ? <Loader2 className="size-3 animate-spin" /> : <MailX className="size-3" />} 退订
+              </Button>
+            ) : null}
           </div>
           {m.ai?.summary ? (
             <div className="rounded-md border bg-muted/40 p-3 text-sm">

@@ -11,6 +11,7 @@ import { AiReplyDialog } from "@/components/mail/ai-reply-dialog";
 import { ComposeDialog, type ComposeInitial } from "@/components/mail/compose-dialog";
 import { MailWorkspace } from "@/components/mail/mail-workspace";
 import { MessageToolbar, type ReplyKind } from "@/components/mail/message-toolbar";
+import { SemanticSearchDialog } from "@/components/mail/semantic-search-dialog";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api-client";
 import type { MessageDetail, MessageListItem } from "@/lib/api-types";
@@ -38,6 +39,7 @@ export function FolderWorkspace({
   const [compose, setCompose] = useState<{ key: number; open: boolean; initial?: ComposeInitial }>({ key: 0, open: false });
   const openCompose = useCallback((initial?: ComposeInitial) => setCompose((c) => ({ key: c.key + 1, open: true, initial })), []);
   const [aiReply, setAiReply] = useState<{ open: boolean; message?: MessageDetail }>({ open: false });
+  const [semantic, setSemantic] = useState<{ open: boolean; query: string }>({ open: false, query: "" });
 
   const invalidate = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ["messages", accountId] });
@@ -134,6 +136,7 @@ export function FolderWorkspace({
         onRefresh={() => refreshFolderAction(accountId, folderId)}
         onOpenMessage={onOpenMessage}
         onServerSearch={onServerSearch}
+        onSemanticSearch={(q) => setSemantic({ open: true, query: q })}
         listHeaderExtra={
           <Button size="sm" onClick={() => openCompose()}>
             <PenSquare className="size-4" /> 写邮件
@@ -155,6 +158,9 @@ export function FolderWorkspace({
           />
         )}
       />
+      {semantic.open ? (
+        <SemanticSearchDialog open={semantic.open} onOpenChange={(open) => setSemantic((s) => ({ ...s, open }))} query={semantic.query} accountId={accountId} />
+      ) : null}
       {aiReply.open && aiReply.message ? (
         <AiReplyDialog
           open={aiReply.open}

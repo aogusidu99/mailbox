@@ -11,6 +11,7 @@ import type { AiRemoteModel, AiRole } from "@/db/schema";
 import type { AiSettingsView, PresetId } from "@/server/ai/settings";
 import type { UsageSummary } from "@/server/ai/usage";
 import { cn } from "cn";
+import { backfillEmbeddingsAction } from "@/app/mail/actions";
 import {
   addCustomProviderAction,
   applyPresetAction,
@@ -406,6 +407,23 @@ export function AiSettingsPanel({
             <span className="text-xs text-muted-foreground">
               账号：{accounts.map((a) => `${a.email}${a.aiEnabled ? "" : "（AI 未开启）"}`).join("、") || "无"}
             </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span>语义搜索向量回填（需先为「语义搜索向量」等级选好模型）：</span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending || !view.data.roles.embedding?.model}
+              onClick={() =>
+                start(async () => {
+                  const r = await backfillEmbeddingsAction(500);
+                  if (r.ok) toast.success(`已加入队列：${r.data} 封`);
+                  else toast.error(r.error);
+                })
+              }
+            >
+              回填最近 500 封
+            </Button>
           </div>
         </CardContent>
       </Card>

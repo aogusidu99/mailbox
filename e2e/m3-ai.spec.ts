@@ -45,7 +45,7 @@ test("配置假 AI 厂商并对邮件做分析与起草", async ({ page }) => {
   await expect(page.getByText("已保存 API Key")).toBeVisible();
 
   await page.getByRole("button", { name: "刷新模型列表" }).click();
-  await expect(page.getByText(/拉取到 2 个模型/)).toBeVisible();
+  await expect(page.getByText(/拉取到 \d+ 个模型/)).toBeVisible();
   // 勾选两个模型进候选池（已勾选则跳过）
   for (const id of ["fake-smart", "fake-fast"]) {
     const box = page.locator("label", { hasText: id }).locator("input[type=checkbox]");

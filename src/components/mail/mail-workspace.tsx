@@ -23,6 +23,7 @@ export function MailWorkspace({
   viewToolbar,
   onOpenMessage,
   onServerSearch,
+  onSemanticSearch,
 }: {
   accountId: string;
   folderId: string;
@@ -32,6 +33,7 @@ export function MailWorkspace({
   viewToolbar?: Parameters<typeof MessageView>[0]["toolbar"];
   onOpenMessage?: (item: MessageListItem) => void;
   onServerSearch?: (q: string) => Promise<void>;
+  onSemanticSearch?: (q: string) => void;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -82,6 +84,7 @@ export function MailWorkspace({
       refreshing={refreshing}
       headerExtra={listHeaderExtra}
       onServerSearch={onServerSearch}
+      onSemanticSearch={onSemanticSearch}
     />
   );
 

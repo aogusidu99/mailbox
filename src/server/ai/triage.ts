@@ -78,6 +78,12 @@ export async function triageMessage(accountId: string, messageId: string, opts: 
 
   publish({ type: "message", accountId, folderId: message.folderId, messageId });
   console.log(`[ai] ${account.email} 「${message.subject ?? ""}」→ ${output.category}/${output.priority}（${result.model}${result.fallbackFrom ? "，降级" : ""}）`);
+
+  // 分类完成后跑自然语言规则（规则可引用 category / priority / needsReply）
+  if (!opts.force) {
+    const { applyRulesToMessage } = await import("./rules");
+    await applyRulesToMessage(accountId, messageId).catch((err) => console.warn("[rules] 执行失败:", err instanceof Error ? err.message : err));
+  }
   return output;
 }
 

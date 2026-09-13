@@ -65,7 +65,9 @@ describe("OpenAI 兼容适配器", () => {
   test("embeddings", async () => {
     const r = await adapter(fake.baseUrl).embed!({ model: "fake-embed", apiKey: "test-key", texts: ["a", "b"] });
     expect(r.vectors).toHaveLength(2);
-    expect(r.vectors[1][0]).toBeCloseTo(0.2);
+    expect(r.vectors[0]).toHaveLength(8);
+    expect(r.vectors[0]).not.toEqual(r.vectors[1]);
+    expect(r.usage.inputTokens).toBe(12);
   });
 
   test("extractJson 兼容围栏与前后杂文", () => {

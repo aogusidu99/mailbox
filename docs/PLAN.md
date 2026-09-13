@@ -265,6 +265,11 @@ M3 验证记录（2026-09-13）：多厂商 AI 适配层（Anthropic 官方 SDK 
 `bun test` 新增假 OpenAI 兼容服务（Bun.serve）驱动的适配器 / 设置 / triage 集成测试；`bun run e2e` 新增 m3 用例（设置页配置假厂商 → AI 分析 → AI 起草）。
 说明：Anthropic 的服务端 refusal fallback 未启用，遇到 refusal 时走本地候选池降级；Batch API 回填未实现，回填走普通队列（串行、可限流）。
 
+M4 验证记录（2026-09-13）：自然语言规则（rules 等级编译 → 预览 → 保存 → 新邮件自动执行 / 立即执行，动作经 outbox 同步）、
+语义搜索（embedding 等级向量化，向量以 JSON 存库、应用内余弦排序；PGlite 无 pgvector）、和邮箱对话 Agent（search_mail / semantic_search /
+list_recent / read_message / propose_actions，操作只给建议、用户确认后执行）、待办面板、退订助手（RFC 8058 一键退订 / mailto / 链接）。
+`bun test` 新增规则求值与编译、向量化与语义搜索、Agent 工具循环、退订测试；`bun run e2e` 新增 m4 用例（规则 → 对话 → 待办）。
+
 需要你确认的 4 个决定：
 
 1. **首批接入哪些邮箱**：Gmail（应用专用密码 vs OAuth）、QQ、163、Outlook？

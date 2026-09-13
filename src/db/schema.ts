@@ -24,7 +24,26 @@ import {
 
 export type EmailAddress = { name?: string; address: string };
 export type UserSettings = { locale?: "zh-CN" | "en"; theme?: "system" | "light" | "dark" };
-export type ActionItem = { title: string; dueAt?: string; assignee?: string };
+export type ActionItem = { title: string; dueAt?: string; assignee?: string; done?: boolean };
+
+/** 自然语言规则编译后的结构 */
+export interface RuleCondition {
+  field: "from" | "to" | "subject" | "body" | "category" | "priority" | "hasAttachment" | "needsReply" | "listId";
+  op: "contains" | "not_contains" | "equals" | "starts_with" | "ends_with" | "matches" | "is_true" | "is_false";
+  value?: string;
+}
+export interface RuleAction {
+  type: "archive" | "trash" | "mark_read" | "mark_unread" | "flag" | "junk" | "move" | "label";
+  /** move：目标文件夹路径；label：Gmail 标签名 */
+  value?: string;
+}
+export interface CompiledRule {
+  name: string;
+  match: "all" | "any";
+  conditions: RuleCondition[];
+  actions: RuleAction[];
+  stopProcessing?: boolean;
+}
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -282,6 +301,44 @@ export const aiDigests = pgTable(
   (t) => [uniqueIndex("ai_digests_user_day_uq").on(t.userId, t.day)],
 );
 
+/** 自然语言规则 */
+export const rules = pgTable("rules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** 为空表示对所有账号生效 */
+  accountId: uuid("account_id").references(() => mailAccounts.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  naturalText: text("natural_text").notNull(),
+  compiled: jsonb("compiled").$type<CompiledRule>().notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  runCount: integer("run_count").notNull().default(0),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  ...timestamps,
+});
+
+/** 邮件向量（PGlite 没有 pgvector，向量以 JSON 数组存储、在应用内做余弦排序） */
+export const messageEmbeddings = pgTable(
+  "message_embeddings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => mailAccounts.id, { onDelete: "cascade" }),
+    chunkIndex: integer("chunk_index").notNull().default(0),
+    model: text("model").notNull(),
+    dims: integer("dims").notNull(),
+    vector: jsonb("vector").$type<number[]>().notNull(),
+    text: text("text").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("message_embeddings_message_chunk_uq").on(t.messageId, t.chunkIndex), index("message_embeddings_account_idx").on(t.accountId)],
+);
+
 export type AiRole = "triage" | "summary" | "extract" | "draft" | "rules" | "chat" | "embedding";
 export type AiEffort = "low" | "medium" | "high" | "xhigh" | "max";
 export interface AiRoleConfig {
@@ -326,3 +383,5 @@ export type Folder = typeof folders.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type MailOp = typeof mailOps.$inferSelect;
 export type AiAnnotation = typeof aiAnnotations.$inferSelect;
+export type Rule = typeof rules.$inferSelect;
+export type MessageEmbedding = typeof messageEmbeddings.$inferSelect;
