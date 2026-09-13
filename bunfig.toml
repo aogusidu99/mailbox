@@ -1,0 +1,3 @@
+# bun test 只扫描 tests/ 目录；e2e/*.spec.ts 由 Playwright 运行（bun run e2e）
+[test]
+root = "tests"
