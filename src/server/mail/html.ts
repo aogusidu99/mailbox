@@ -44,6 +44,8 @@ export function sanitizeEmailHtml(html: string, opts: { allowRemoteImages?: bool
     allowedSchemes: ["http", "https", "mailto", "tel", "data"],
     allowedSchemesByTag: { img: ["data", "http", "https"] },
     allowProtocolRelative: false,
+    // <style> 已在 textFilter 里去掉 url()，且正文在无脚本的 sandbox iframe 中渲染，接受该风险并关闭重复警告
+    allowVulnerableTags: true,
     // 内联 style 只保留常见排版属性（sanitize-html 会去掉 expression/url 等危险值）
     allowedStyles: {
       "*": {
