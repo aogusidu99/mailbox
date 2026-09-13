@@ -1,8 +1,8 @@
 "use client";
 
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Loader2, Paperclip, RefreshCw, Search, Star } from "lucide-react";
+import { ListTree, Loader2, Paperclip, RefreshCw, Search, Star } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,9 @@ import { addressDisplayName, colorFor, formatListDate, initialsOf } from "@/lib/
 import { fmt } from "@/lib/i18n";
 import { useT } from "@/lib/locale-context";
 import { cn } from "cn";
+import { ThreadList } from "./thread-list";
+
+const CONVERSATION_VIEW_KEY = "mailbox:conversationView";
 
 export interface ListFilters {
   q: string;
@@ -89,11 +92,38 @@ export function MessageList({
   const [serverSearching, setServerSearching] = useState(false);
   const filterKey = { q, unread: filters.unread, flagged: filters.flagged, category: filters.category };
 
+  // 会话视图（按主题汇总 + 回复树）开关，记在 localStorage
+  const [conversationView, setConversationView] = useState(false);
+  useEffect(() => {
+    try {
+      setConversationView(localStorage.getItem(CONVERSATION_VIEW_KEY) === "1");
+    } catch {
+      /* 忽略 */
+    }
+  }, []);
+  const toggleConversation = () =>
+    setConversationView((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem(CONVERSATION_VIEW_KEY, next ? "1" : "0");
+      } catch {
+        /* 忽略 */
+      }
+      return next;
+    });
+
   const query = useInfiniteQuery({
     queryKey: ["messages", accountId, folderId, filterKey],
     queryFn: ({ pageParam }) => api.messages({ accountId, folderId, cursor: pageParam, ...filterKey }),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
+    enabled: !conversationView,
+  });
+
+  const threadsQuery = useQuery({
+    queryKey: ["threads", accountId, folderId, filterKey],
+    queryFn: () => api.threads({ accountId, folderId, ...filterKey }),
+    enabled: conversationView,
   });
 
   const items = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
@@ -122,8 +152,18 @@ export function MessageList({
           <h2 className="truncate text-sm font-semibold">{folderName}</h2>
           <div className="flex items-center gap-1">
             {headerExtra}
+            <Button
+              variant={conversationView ? "default" : "ghost"}
+              size="icon-sm"
+              onClick={toggleConversation}
+              title={t.list.conversationView}
+              aria-label={t.list.conversationView}
+              aria-pressed={conversationView}
+            >
+              <ListTree className="size-4" />
+            </Button>
             <Button variant="ghost" size="icon-sm" onClick={onRefresh} title={t.list.refresh} aria-label={t.list.refresh} disabled={refreshing}>
-              <RefreshCw className={cn("size-4", (refreshing || query.isFetching) && "animate-spin")} />
+              <RefreshCw className={cn("size-4", (refreshing || query.isFetching || threadsQuery.isFetching) && "animate-spin")} />
             </Button>
           </div>
         </div>
@@ -177,7 +217,19 @@ export function MessageList({
       </div>
 
       <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
-        {query.isLoading ? (
+        {conversationView ? (
+          threadsQuery.isLoading ? (
+            <div className="flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> {t.list.loading}
+            </div>
+          ) : threadsQuery.isError ? (
+            <div className="p-6 text-sm text-destructive">{fmt(t.list.loadFailed, { error: (threadsQuery.error as Error).message })}</div>
+          ) : !threadsQuery.data || threadsQuery.data.threads.length === 0 ? (
+            <div className="p-6 text-center text-sm text-muted-foreground">{q || filters.unread || filters.flagged ? t.list.noMatch : t.list.empty}</div>
+          ) : (
+            <ThreadList threads={threadsQuery.data.threads} capped={threadsQuery.data.capped} selectedId={selectedId} onSelect={onSelect} isEn={isEn} />
+          )
+        ) : query.isLoading ? (
           <div className="flex items-center justify-center gap-2 p-6 text-sm text-muted-foreground">
             <Loader2 className="size-4 animate-spin" /> {t.list.loading}
           </div>

@@ -1,18 +1,28 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Download, ImageOff, Loader2, MailX, Paperclip } from "lucide-react";
+import { Check, Download, ImageOff, Languages, Loader2, MailX, Paperclip, RefreshCw } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { unsubscribeAction } from "@/app/mail/actions";
+import { translateMessageAction, unsubscribeAction } from "@/app/mail/actions";
 import { EmailFrame } from "@/components/mail/email-frame";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api } from "@/lib/api-client";
 import type { MessageDetail } from "@/lib/api-types";
 import { addressDisplayName, colorFor, formatAddressList, formatBytes, formatFullDate, initialsOf } from "@/lib/format";
 import { fmt } from "@/lib/i18n";
 import { useLocale, useT } from "@/lib/locale-context";
+import { useTranslationLangs } from "@/lib/translation-context";
 import { categoryLabel } from "./message-list";
+
+interface Translation {
+  lang: string;
+  label: string;
+  subject: string | null;
+  body: string;
+  model: string | null;
+}
 
 export function MessageView({
   messageId,
@@ -26,8 +36,22 @@ export function MessageView({
 }) {
   const t = useT();
   const locale = useLocale();
+  const langs = useTranslationLangs();
   const [remote, setRemote] = useState(false);
   const [unsubPending, startUnsub] = useTransition();
+  const [translation, setTranslation] = useState<Translation | null>(null);
+  const [translating, startTranslate] = useTransition();
+
+  const translate = (lang: { code: string; label: string }, refresh = false) =>
+    startTranslate(async () => {
+      const r = await translateMessageAction(messageId, lang.code, refresh);
+      if (!r.ok) {
+        toast.error(fmt(t.view.translateFailed, { error: r.error }));
+        return;
+      }
+      setTranslation({ lang: lang.code, label: lang.label, subject: r.data.subject, body: r.data.body, model: r.data.model });
+    });
+
   const unsubscribe = () =>
     startUnsub(async () => {
       const r = await unsubscribeAction(messageId);
@@ -70,7 +94,7 @@ export function MessageView({
       {toolbar ? <div className="flex flex-wrap items-center gap-1 border-b px-3 py-1.5">{toolbar(m)}</div> : null}
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="space-y-3 border-b px-4 py-3">
-          <h1 className="text-lg font-semibold leading-snug">{m.subject || t.list.noSubject}</h1>
+          <h1 className="text-lg font-semibold leading-snug">{(translation?.subject || m.subject) || t.list.noSubject}</h1>
           <div className="flex items-start gap-3">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white" style={{ background: colorFor(from?.address ?? "?") }}>
               {initialsOf(from)}
@@ -90,11 +114,35 @@ export function MessageView({
               ) : null}
               <div className="text-xs text-muted-foreground">{formatFullDate(m.date)}</div>
             </div>
-            {m.listUnsubscribe ? (
-              <Button size="xs" variant="outline" onClick={unsubscribe} disabled={unsubPending} title={m.listUnsubscribe}>
-                {unsubPending ? <Loader2 className="size-3 animate-spin" /> : <MailX className="size-3" />} {t.view.unsubscribe}
-              </Button>
-            ) : null}
+            <div className="flex shrink-0 items-center gap-1">
+              {langs.length ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={<Button size="xs" variant="outline" disabled={translating} aria-label={t.view.translate} title={t.view.translate} />}
+                  >
+                    {translating ? <Loader2 className="size-3 animate-spin" /> : <Languages className="size-3" />} {t.view.translate}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {translation ? (
+                      <>
+                        <DropdownMenuItem onClick={() => setTranslation(null)}>{t.view.original}</DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                      </>
+                    ) : null}
+                    {langs.map((l) => (
+                      <DropdownMenuItem key={l.code} onClick={() => translate(l)}>
+                        <Check className={translation?.lang === l.code ? "size-3.5" : "size-3.5 opacity-0"} /> {l.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null}
+              {m.listUnsubscribe ? (
+                <Button size="xs" variant="outline" onClick={unsubscribe} disabled={unsubPending} title={m.listUnsubscribe}>
+                  {unsubPending ? <Loader2 className="size-3 animate-spin" /> : <MailX className="size-3" />} {t.view.unsubscribe}
+                </Button>
+              ) : null}
+            </div>
           </div>
           {m.ai?.summary ? (
             <div className="rounded-md border bg-muted/40 p-3 text-sm">
@@ -128,7 +176,22 @@ export function MessageView({
           ) : null}
         </div>
 
-        {m.html ? (
+        {translation ? (
+          <div className="space-y-2 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+              <span>{fmt(t.view.translatedBy, { lang: translation.label, model: translation.model ?? "" })}</span>
+              <span className="flex items-center gap-3">
+                <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => translate({ code: translation.lang, label: translation.label }, true)} disabled={translating}>
+                  <RefreshCw className={translating ? "size-3 animate-spin" : "size-3"} /> {t.view.retranslate}
+                </button>
+                <button type="button" className="hover:text-foreground" onClick={() => setTranslation(null)}>
+                  {t.view.original}
+                </button>
+              </span>
+            </div>
+            <div className="whitespace-pre-wrap text-sm leading-relaxed">{translation.body}</div>
+          </div>
+        ) : m.html ? (
           <EmailFrame html={m.html} />
         ) : m.bodyFetched ? (
           <div className="p-6 text-sm text-muted-foreground">{t.view.noBody}</div>

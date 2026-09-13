@@ -16,7 +16,7 @@ import { FOLDER_ROLE_ORDER } from "@/server/sync/engine";
 const PAGE_SIZE = 50;
 
 /** 列表排序用的有效日期：Date 头 → 服务器接收时间 → 入库时间 */
-const effectiveDate = sql<Date>`coalesce(${messages.date}, ${messages.internalDate}, ${messages.createdAt})`;
+export const effectiveDate = sql<Date>`coalesce(${messages.date}, ${messages.internalDate}, ${messages.createdAt})`;
 
 export async function getSidebarData(userId: string): Promise<SidebarData> {
   const db = await getDb();
@@ -69,9 +69,9 @@ function decodeCursor(cursor: string): { date: Date; id: string } | null {
   }
 }
 
-type MessageRow = Message & { effectiveDate: Date; ai: typeof aiAnnotations.$inferSelect | null };
+export type MessageRow = Message & { effectiveDate: Date; ai: typeof aiAnnotations.$inferSelect | null };
 
-function toListItem(m: MessageRow): MessageListItem {
+export function toListItem(m: MessageRow): MessageListItem {
   return {
     id: m.id,
     accountId: m.accountId,

@@ -62,12 +62,40 @@ function composeInput(payload: ComposePayload, from: EmailAddress, thread: { inR
   };
 }
 
+/**
+ * 回复时决定是否把自己加入 BCC：仅当账号开启该设置且这是一封回复（有 inReplyToMessageId）；
+ * 若自己已在收件人（to/cc/bcc）里则不重复添加。返回要追加到 bcc 的地址，或 null。
+ */
+export function bccSelfAddress(opts: {
+  enabled: boolean;
+  isReply: boolean;
+  selfEmail: string;
+  to: EmailAddress[];
+  cc?: EmailAddress[];
+  bcc?: EmailAddress[];
+}): EmailAddress | null {
+  if (!opts.enabled || !opts.isReply) return null;
+  const self = opts.selfEmail.toLowerCase();
+  const already = [...opts.to, ...(opts.cc ?? []), ...(opts.bcc ?? [])].some((a) => a.address.toLowerCase() === self);
+  return already ? null : { address: opts.selfEmail };
+}
+
 export async function sendMail(userId: string, accountId: string, payload: ComposePayload): Promise<{ messageId: string }> {
   const account = await loadAccount(userId, accountId);
   const from: EmailAddress = { name: account.displayName ?? undefined, address: account.email };
   const thread = await resolveThreadHeaders(payload.inReplyToMessageId);
   const extra = payload.forwardOfMessageId && payload.includeOriginalAttachments ? await forwardedAttachments(userId, payload.forwardOfMessageId) : [];
   const input = composeInput(payload, from, thread, extra);
+  // 回复时按账号设置自动密送一份给自己（BCC 不进邮件头，收件人看不到）
+  const selfBcc = bccSelfAddress({
+    enabled: account.bccSelfOnReply,
+    isReply: Boolean(payload.inReplyToMessageId),
+    selfEmail: account.email,
+    to: input.to,
+    cc: input.cc,
+    bcc: input.bcc,
+  });
+  if (selfBcc) input.bcc = [...(input.bcc ?? []), selfBcc];
   if (input.to.length + (input.cc?.length ?? 0) + (input.bcc?.length ?? 0) === 0) throw new Error("请至少填写一个收件人");
 
   const { mime, messageId } = await buildMime(input);

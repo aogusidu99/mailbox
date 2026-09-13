@@ -203,8 +203,19 @@ mailbox 是服务端应用，所以把 localStorage 换成数据库（加密）�
 | **M3 AI 基础** | 新邮件自动分类 + 优先级 + 摘要；标签/文件夹写回；智能回复草稿存 Drafts；每日摘要页；按账号开关；成本面板 | 新邮件被打上类别标签并在手机上可见；草稿在其他客户端可见 |
 | **M4 AI 进阶** | 自然语言规则引擎；语义搜索；"和邮箱对话" Agent；待办/日程提取；退订助手；Batch API 回填历史 | 用自然语言创建规则并命中新邮件；对话中完成"帮我找上周的发票并归档" |
 | **M5 完善与部署** | Gmail/Outlook OAuth（XOAUTH2）；可选 Gmail API/Graph 推送；移动端布局 + PWA；中英文；Docker 部署；备份；e2e 测试 | docker-compose 在 VPS 上跑通完整流程 |
+| **M6 翻译 / 对话历史 / 摘要处理台** | 邮件翻译（中/英/德，设置里可加语言，按 messageId+语言缓存，新增 translate 等级）；"和邮箱对话"历史持久化（会话列表、续聊、删除）；每日摘要升级为「摘要处理台」：可选当天/本周/本月/自上次以来/自定义时间段，AI 给出每封邮件的处理意见，可自然语言二次调整、确认后批量执行，回复类给出主要意见即可生成邮件后发送 | 读信界面切换语言看到译文；对话刷新后仍在；摘要页选时间段→生成处理意见→自然语言调整→勾选确认执行 |
 
-建议开发顺序严格按 M0→M5，每个里程碑结束提交一次代码。
+建议开发顺序严格按 M0→M5，每个里程碑结束提交一次代码；M6 为增量功能。
+
+### M6 验收记录（2026-09-13）
+
+- **数据库**：新增 `message_translations`、`chat_threads`、`chat_messages`、`digest_reports` 四张表（迁移 `drizzle/0005_swift_vengeance.sql`，纯新增，不破坏旧数据；旧 `ai_digests` 缓存表保留但不再使用）。
+- **邮件翻译**：`src/server/ai/translate.ts` + 读信界面「翻译」下拉（原文/中/英/德，可重译）；目标语言在「AI 设置 → 邮件翻译语言」里增删；新增 `translate` 任务等级参与模型路由。
+- **对话历史**：`src/server/ai/chat-store.ts` 持久化会话；`/mail/chat` 左侧会话列表、新建/续聊/删除；`chatTurn` 保持无状态，落库在 action 层。
+- **摘要处理台**：`src/server/ai/digest.ts`（时间段解析、处理意见生成、自然语言 replan、批量执行、回复生成）；`/mail/digest` 页面支持时间段切换、逐封处理意见编辑、批量确认执行、回复起草并发送。
+- **回复密送自己**：`mail_accounts` 新增 `bcc_self_on_reply` 列（迁移 `0006`），邮箱管理页每账号一个开关；`send.ts` 的 `bccSelfAddress()` 仅在回复（有 inReplyToMessageId）时把本邮箱加入 BCC（不进邮件头、已在收件人则跳过）。
+- **会话视图**：按主题汇总 + 按 In-Reply-To / References 还原回复树。纯函数 `src/server/mail/threading.ts`（`buildThreads`），接口 `GET /api/mail/threads`，组件 `thread-list.tsx`；邮件列表头新增 ListTree 开关（localStorage 记忆），最多汇总最近 500 封。
+- **验证**：`bun run typecheck` 通过；`bun run lint` 通过（仅 2 条历史 warning）；`bun test` 68 项全过，新增 `tests/ai-features.test.ts`、`tests/threading.test.ts` 及 compose 的 BCC 用例（outbox 偶发 hook 超时，单独跑通过，与本次无关）；`bun run build` 成功；`bun run dev` 后 `/mail/chat`、`/mail/digest`、`/mail/accounts`、`/api/mail/threads` 均正常路由。
 
 ## 6. 目录结构（M0 落地后）
 

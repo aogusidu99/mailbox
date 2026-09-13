@@ -20,7 +20,7 @@ export default async function AccountsPage() {
       <Card>
         <CardHeader>
           <CardTitle>已连接的邮箱</CardTitle>
-          <CardDescription>可以手动触发同步、开关 AI 处理或移除邮箱（移除只删除本地缓存，不影响服务器上的邮件）。</CardDescription>
+          <CardDescription>可以手动触发同步、开关 AI 处理、设置回复时是否密送自己，或移除邮箱（移除只删除本地缓存，不影响服务器上的邮件）。</CardDescription>
         </CardHeader>
         <CardContent className="divide-y">
           {accounts.length === 0 ? <p className="py-4 text-sm text-muted-foreground">还没有连接任何邮箱。</p> : null}
@@ -36,6 +36,7 @@ export default async function AccountsPage() {
                 syncError: a.syncError,
                 lastSyncAt: a.lastSyncAt ? a.lastSyncAt.toISOString() : null,
                 aiEnabled: a.aiEnabled,
+                bccSelfOnReply: a.bccSelfOnReply,
                 syncWindowDays: a.syncWindowDays,
                 authType: a.authType,
               }}

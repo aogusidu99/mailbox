@@ -120,3 +120,12 @@ export async function setAccountAi(userId: string, accountId: string, aiEnabled:
     .set({ aiEnabled })
     .where(and(eq(mailAccounts.userId, userId), eq(mailAccounts.id, accountId)));
 }
+
+/** 是否在回复邮件时自动密送一份给自己 */
+export async function setAccountBccSelf(userId: string, accountId: string, bccSelfOnReply: boolean): Promise<void> {
+  const db = await getDb();
+  await db
+    .update(mailAccounts)
+    .set({ bccSelfOnReply })
+    .where(and(eq(mailAccounts.userId, userId), eq(mailAccounts.id, accountId)));
+}

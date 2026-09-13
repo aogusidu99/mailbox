@@ -1,0 +1,6 @@
+# 自动 HTTPS 反向代理：把域名的 443 → 应用容器 app:3000
+# 域名从环境变量 APP_DOMAIN 读取（见 docker-compose.caddy.yml / .env）
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:3000
+}

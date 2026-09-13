@@ -17,11 +17,19 @@ export const FINAL_FALLBACK = { provider: "anthropic", model: "claude-opus-5" } 
 export const AI_ROLES: Array<{ role: AiRole; label: string; hint: string }> = [
   { role: "triage", label: "分类 / 优先级", hint: "高频、短输入，适合便宜快速的模型" },
   { role: "summary", label: "摘要 / 每日摘要", hint: "高频、中等长度" },
+  { role: "translate", label: "邮件翻译", hint: "按需、中等长度，便宜快速即可" },
   { role: "extract", label: "待办 / 日程 / 账单抽取", hint: "结构化输出，准确性重要" },
   { role: "draft", label: "回复起草", hint: "低频、质量敏感" },
   { role: "rules", label: "自然语言规则编译", hint: "低频、需要推理" },
   { role: "chat", label: "和邮箱对话", hint: "多轮、工具调用" },
   { role: "embedding", label: "语义搜索向量", hint: "批量，需要支持 embedding 的厂商" },
+];
+
+/** 邮件翻译的默认目标语言：中 / 英 / 德（可在设置里增删） */
+export const DEFAULT_TRANSLATION_LANGS = [
+  { code: "zh-CN", label: "中文" },
+  { code: "en", label: "English" },
+  { code: "de", label: "Deutsch" },
 ];
 
 export const DEFAULT_SETTINGS: AiSettingsData = {
@@ -33,6 +41,7 @@ export const DEFAULT_SETTINGS: AiSettingsData = {
   customProviders: [],
   writeBack: { gmailLabels: true, imapFolders: false },
   autoTriageScope: "inbox",
+  translationLangs: DEFAULT_TRANSLATION_LANGS,
 };
 
 export type PresetId = "quality" | "balanced" | "economy";
@@ -50,6 +59,7 @@ export function presetRoles(preset: PresetId, hasGoogle: boolean, hasOpenAI: boo
       ? {
           triage: a("claude-opus-5", "low"),
           summary: a("claude-opus-5", "low"),
+          translate: a("claude-sonnet-5", "low"),
           extract: a("claude-opus-5", "medium"),
           draft: a("claude-opus-5", "high"),
           rules: a("claude-opus-5", "high"),
@@ -59,6 +69,7 @@ export function presetRoles(preset: PresetId, hasGoogle: boolean, hasOpenAI: boo
         ? {
             triage: a("claude-haiku-4-5"),
             summary: a("claude-sonnet-5", "low"),
+            translate: a("claude-haiku-4-5"),
             extract: a("claude-sonnet-5", "medium"),
             draft: a("claude-opus-5", "high"),
             rules: a("claude-opus-5", "high"),
@@ -67,6 +78,7 @@ export function presetRoles(preset: PresetId, hasGoogle: boolean, hasOpenAI: boo
         : {
             triage: a("claude-haiku-4-5"),
             summary: a("claude-haiku-4-5"),
+            translate: a("claude-haiku-4-5"),
             extract: a("claude-haiku-4-5"),
             draft: a("claude-sonnet-5", "medium"),
             rules: a("claude-sonnet-5", "medium"),
@@ -88,6 +100,7 @@ function normalize(data: Partial<AiSettingsData> | undefined): AiSettingsData {
   merged.roles = { ...(data?.roles ?? {}) };
   merged.customProviders = [...(data?.customProviders ?? [])];
   merged.writeBack = { ...DEFAULT_SETTINGS.writeBack, ...(data?.writeBack ?? {}) };
+  merged.translationLangs = data?.translationLangs?.length ? [...data.translationLangs] : [...DEFAULT_TRANSLATION_LANGS];
   // 内置厂商没有候选池时用兜底列表填充
   for (const p of BUILT_IN_PROVIDERS) {
     if (!merged.candidates[p.id] || merged.candidates[p.id].length === 0) merged.candidates[p.id] = [...p.fallbackModels];
@@ -237,6 +250,16 @@ export function removeCustomProvider(data: AiSettingsData, id: string): AiSettin
     next.defaultModel = FINAL_FALLBACK.model;
   }
   return next;
+}
+
+/** 覆盖翻译目标语言列表（去重、去空、限制 20 个） */
+export function setTranslationLangs(data: AiSettingsData, langs: Array<{ code: string; label: string }>): AiSettingsData {
+  const seen = new Set<string>();
+  const cleaned = langs
+    .map((l) => ({ code: l.code.trim(), label: l.label.trim() || l.code.trim() }))
+    .filter((l) => l.code && !seen.has(l.code) && (seen.add(l.code), true))
+    .slice(0, 20);
+  return { ...data, translationLangs: cleaned.length ? cleaned : [...DEFAULT_TRANSLATION_LANGS] };
 }
 
 export function setCandidates(data: AiSettingsData, providerId: string, models: AiRemoteModel[]): AiSettingsData {

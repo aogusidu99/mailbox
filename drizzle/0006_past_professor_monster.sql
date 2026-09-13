@@ -1,0 +1,1 @@
+ALTER TABLE "mail_accounts" ADD COLUMN "bcc_self_on_reply" boolean DEFAULT false NOT NULL;

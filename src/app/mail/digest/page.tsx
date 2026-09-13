@@ -1,45 +1,45 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { dailyDigest, todayKey } from "@/server/ai/assist";
+import { loadDigest, todayKey, type DigestKind } from "@/server/ai/digest";
 import { requireUserPage } from "@/server/auth/session";
 import { DigestView } from "./digest-view";
 
-export const metadata: Metadata = { title: "每日摘要 · Mailbox" };
+export const metadata: Metadata = { title: "摘要与处理台 · Mailbox" };
+
+const KINDS: DigestKind[] = ["day", "week", "month", "since", "custom"];
 
 export default async function DigestPage(props: PageProps<"/mail/digest">) {
   const user = await requireUserPage();
   const sp = await props.searchParams;
-  const dayParam = typeof sp.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.day) ? sp.day : todayKey();
-  let digest: Awaited<ReturnType<typeof dailyDigest>>;
+  const kind = (typeof sp.kind === "string" && KINDS.includes(sp.kind as DigestKind) ? sp.kind : "day") as DigestKind;
+  const day = typeof sp.day === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.day) ? sp.day : todayKey();
+  const from = typeof sp.from === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.from) ? sp.from : undefined;
+  const to = typeof sp.to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(sp.to) ? sp.to : undefined;
+
   let error: string | null = null;
+  let digest: Awaited<ReturnType<typeof loadDigest>>;
   try {
-    digest = await dailyDigest(user.id, dayParam);
+    digest = await loadDigest(user.id, kind, { day, from, to });
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
-    digest = { items: [], content: null, cached: false };
+    digest = { range: { kind, fromTs: new Date(), toTs: new Date(), periodKey: "", label: "" }, items: [], content: null, plan: [], model: null, cached: false };
   }
-  const prev = shiftDay(dayParam, -1);
-  const next = shiftDay(dayParam, 1);
+
   return (
-    <main className="mx-auto w-full max-w-3xl space-y-4 p-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">每日摘要 · {dayParam}</h1>
-        <div className="flex items-center gap-2 text-sm">
-          <Link className="rounded-md border px-2 py-1 hover:bg-muted" href={`/mail/digest?day=${prev}`}>
-            ← {prev}
-          </Link>
-          <Link className="rounded-md border px-2 py-1 hover:bg-muted" href={`/mail/digest?day=${next}`}>
-            {next} →
-          </Link>
-        </div>
-      </div>
-      <DigestView day={dayParam} items={digest.items} content={digest.content} model={digest.model} error={error} />
+    <main className="mx-auto w-full max-w-3xl p-4 md:p-6">
+      <DigestView
+        key={digest.range.periodKey}
+        kind={kind}
+        day={day}
+        from={from}
+        to={to}
+        periodKey={digest.range.periodKey}
+        label={digest.range.label}
+        items={digest.items}
+        content={digest.content}
+        plan={digest.plan}
+        model={digest.model}
+        error={error}
+      />
     </main>
   );
-}
-
-function shiftDay(day: string, delta: number): string {
-  const d = new Date(`${day}T00:00:00`);
-  d.setDate(d.getDate() + delta);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }

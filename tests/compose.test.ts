@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { simpleParser } from "mailparser";
 import { forwardSubject, quoteText, replyAllRecipients, replySubject, stripHtml } from "@/lib/quote";
 import { buildMime, parseAddressList } from "@/server/mail/compose";
+import { bccSelfAddress } from "@/server/mail/send";
 
 describe("compose", () => {
   test("parseAddressList 解析带名字与多个地址", () => {
@@ -48,6 +49,21 @@ describe("compose", () => {
     const q = quoteText({ from: [{ name: "Alice", address: "alice@x.com" }], date: "2026-09-08T10:00:00.000Z", text: "line1\nline2", html: null });
     expect(q).toContain("Alice <alice@x.com> 写道：");
     expect(q).toContain("> line1\n> line2");
+  });
+
+  test("bccSelfAddress：仅回复且开启时追加自己，已在收件人里则跳过", () => {
+    const self = "me@x.com";
+    const base = { selfEmail: self, to: [{ address: "a@b.com" }], cc: [], bcc: [] };
+    // 开启 + 回复 + 自己不在收件人 → 追加
+    expect(bccSelfAddress({ enabled: true, isReply: true, ...base })).toEqual({ address: self });
+    // 未开启 → null
+    expect(bccSelfAddress({ enabled: false, isReply: true, ...base })).toBeNull();
+    // 不是回复（新邮件/转发）→ null
+    expect(bccSelfAddress({ enabled: true, isReply: false, ...base })).toBeNull();
+    // 自己已在 to（大小写不敏感）→ 不重复
+    expect(bccSelfAddress({ enabled: true, isReply: true, selfEmail: self, to: [{ address: "ME@X.com" }], cc: [], bcc: [] })).toBeNull();
+    // 自己已在 cc → 不重复
+    expect(bccSelfAddress({ enabled: true, isReply: true, selfEmail: self, to: [{ address: "a@b.com" }], cc: [{ address: "me@x.com" }] })).toBeNull();
   });
 
   test("replyAllRecipients 去掉自己并去重", () => {

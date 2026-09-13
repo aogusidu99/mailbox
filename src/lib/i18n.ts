@@ -46,6 +46,8 @@ const zh = {
     noSubject: "(无主题)",
     refresh: "刷新",
     compose: "写邮件",
+    conversationView: "会话视图（按主题汇总，显示回复关系）",
+    threadCapped: "邮件较多，仅按最近 500 封汇总会话",
   },
   view: {
     to: "收件人",
@@ -67,6 +69,12 @@ const zh = {
     unsubMailto: "已向 {to} 发送退订邮件",
     unsubOneClick: "已向 {to} 发送一键退订请求",
     unsubNone: "这封邮件没有提供退订方式",
+    translate: "翻译",
+    original: "原文",
+    translating: "翻译中…",
+    translatedBy: "已翻译为{lang} · {model}",
+    translateFailed: "翻译失败：{error}",
+    retranslate: "重新翻译",
   },
   toolbar: {
     reply: "回复",
@@ -175,6 +183,8 @@ const en: Dict = {
     noSubject: "(no subject)",
     refresh: "Refresh",
     compose: "Compose",
+    conversationView: "Conversation view (group by subject, show reply tree)",
+    threadCapped: "Many messages — grouping only the most recent 500",
   },
   view: {
     to: "To",
@@ -196,6 +206,12 @@ const en: Dict = {
     unsubMailto: "Sent an unsubscribe email to {to}",
     unsubOneClick: "Sent a one-click unsubscribe request to {to}",
     unsubNone: "This message offers no unsubscribe method",
+    translate: "Translate",
+    original: "Original",
+    translating: "Translating…",
+    translatedBy: "Translated to {lang} · {model}",
+    translateFailed: "Translation failed: {error}",
+    retranslate: "Re-translate",
   },
   toolbar: {
     reply: "Reply",

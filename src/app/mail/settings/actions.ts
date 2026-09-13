@@ -13,6 +13,7 @@ import {
   removeCustomProvider,
   saveAiSettings,
   setCandidates,
+  setTranslationLangs,
   toSettingsView,
   type AiSettingsView,
   type PresetId,
@@ -162,6 +163,18 @@ export async function saveBehaviorAction(patch: Partial<Pick<AiSettingsData, "wr
       ...s,
       data: { ...s.data, ...(patch.autoTriageScope ? { autoTriageScope: patch.autoTriageScope } : {}), writeBack: { ...s.data.writeBack, ...(patch.writeBack ?? {}) } },
     }));
+    return view(user.id);
+  });
+}
+
+const translationLangsSchema = z.array(z.object({ code: z.string().trim().min(1).max(20), label: z.string().trim().max(40) })).max(20);
+
+/** 保存邮件翻译目标语言列表 */
+export async function saveTranslationLangsAction(langs: Array<{ code: string; label: string }>) {
+  return run(async () => {
+    const user = await requireUser();
+    const parsed = translationLangsSchema.parse(langs);
+    await saveAiSettings(user.id, (s) => ({ ...s, data: setTranslationLangs(s.data, parsed) }));
     return view(user.id);
   });
 }

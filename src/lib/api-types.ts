@@ -65,6 +65,34 @@ export interface MessageListResponse {
   nextCursor: string | null;
 }
 
+/** 会话视图：一封邮件及其回复子树 */
+export interface ThreadNode {
+  message: MessageListItem;
+  children: ThreadNode[];
+}
+
+/** 按主题汇总的一个会话 */
+export interface ThreadGroup {
+  key: string;
+  subject: string | null;
+  messageCount: number;
+  unreadCount: number;
+  lastDate: string | null;
+  /** 参与者显示名（去重） */
+  participants: string[];
+  flagged: boolean;
+  hasAttachments: boolean;
+  roots: ThreadNode[];
+}
+
+export interface ThreadListResponse {
+  threads: ThreadGroup[];
+  /** 参与汇总的邮件总数 */
+  total: number;
+  /** 是否因超过上限而被截断（只汇总了最近 N 封） */
+  capped: boolean;
+}
+
 export interface AttachmentDto {
   id: string;
   filename: string | null;

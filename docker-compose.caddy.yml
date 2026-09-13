@@ -1,0 +1,24 @@
+# 叠加文件：给 docker-compose.yml 加一个 Caddy 反向代理，自动申请 / 续期 HTTPS 证书。
+# 用法（需要一个已解析到本机公网 IP 的域名）：
+#   在 .env 里填 APP_DOMAIN=mail.你的域名
+#   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
+# 安全组只需放行 80、443（以及 22 SSH），不要放行 3000。
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

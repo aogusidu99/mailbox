@@ -9,6 +9,7 @@ import {
   deleteMailAccount,
   getAccountForUser,
   setAccountAi,
+  setAccountBccSelf,
   testAccountConnection,
 } from "@/server/mail/accounts";
 import type { ConnectionTestResult } from "@/server/providers/types";
@@ -89,6 +90,17 @@ export async function toggleAccountAiAction(accountId: string, enabled: boolean)
   try {
     const user = await requireUser();
     await setAccountAi(user.id, accountId, enabled);
+    revalidatePath("/mail/accounts");
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+export async function toggleAccountBccSelfAction(accountId: string, enabled: boolean): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    await setAccountBccSelf(user.id, accountId, enabled);
     revalidatePath("/mail/accounts");
     return { ok: true, data: undefined };
   } catch (err) {

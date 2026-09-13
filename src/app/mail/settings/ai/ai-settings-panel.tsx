@@ -23,6 +23,7 @@ import {
   saveDefaultsAction,
   saveProviderKeyAction,
   saveRoleAction,
+  saveTranslationLangsAction,
   testProviderAction,
 } from "../actions";
 
@@ -48,6 +49,18 @@ export function AiSettingsPanel({
   const [pending, start] = useTransition();
   const [custom, setCustom] = useState({ id: "", name: "", baseUrl: "", apiKeyHint: "" });
   const [backfillLimit, setBackfillLimit] = useState(100);
+  const [langInput, setLangInput] = useState({ code: "", label: "" });
+  const translationLangs = view.data.translationLangs ?? [];
+
+  const addLang = () => {
+    const code = langInput.code.trim();
+    if (!code) return;
+    const next = [...translationLangs.filter((l) => l.code !== code), { code, label: langInput.label.trim() || code }];
+    void apply(saveTranslationLangsAction(next), "已添加翻译语言").then((ok) => {
+      if (ok) setLangInput({ code: "", label: "" });
+    });
+  };
+  const removeLang = (code: string) => void apply(saveTranslationLangsAction(translationLangs.filter((l) => l.code !== code)));
 
   const active = view.providers.find((p) => p.id === activeId) ?? view.providers[0];
   const candidates = view.data.candidates[active.id] ?? [];
@@ -423,6 +436,35 @@ export function AiSettingsPanel({
               }
             >
               回填最近 500 封
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 邮件翻译语言 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>邮件翻译语言</CardTitle>
+          <CardDescription>在读信界面点「翻译」时可选择的目标语言（用 BCP-47 代码，如 zh-CN / en / de / ja / fr）。翻译用「邮件翻译」等级的模型，结果会缓存。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-1.5">
+            {translationLangs.map((l) => (
+              <span key={l.code} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-sm">
+                {l.label}
+                <span className="text-xs text-muted-foreground">{l.code}</span>
+                <button type="button" aria-label={`删除 ${l.label}`} className="text-muted-foreground hover:text-destructive" disabled={pending} onClick={() => removeLang(l.code)}>
+                  <XCircle className="size-3.5" />
+                </button>
+              </span>
+            ))}
+            {translationLangs.length === 0 ? <span className="text-xs text-muted-foreground">未配置（读信界面将不显示翻译按钮）</span> : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input placeholder="代码，如 ja" value={langInput.code} onChange={(e) => setLangInput({ ...langInput, code: e.target.value })} className="w-32" />
+            <Input placeholder="显示名，如 日本語" value={langInput.label} onChange={(e) => setLangInput({ ...langInput, label: e.target.value })} className="w-40" />
+            <Button size="sm" variant="outline" onClick={addLang} disabled={pending || !langInput.code.trim()}>
+              添加语言
             </Button>
           </div>
         </CardContent>

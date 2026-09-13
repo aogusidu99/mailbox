@@ -114,12 +114,12 @@ export async function aiSummarizeAction(messageId: string) {
   });
 }
 
-export async function refreshDigestAction(day: string) {
+/** 把邮件翻译成目标语言（结果缓存，可 refresh 重译） */
+export async function translateMessageAction(messageId: string, lang: string, refresh = false) {
   return run(async () => {
     const user = await requireUser();
-    const { dailyDigest } = await import("@/server/ai/assist");
-    const r = await dailyDigest(user.id, day, { refresh: true });
-    return { content: r.content };
+    const { translateMessage } = await import("@/server/ai/translate");
+    return translateMessage(user.id, messageId, lang, { refresh });
   });
 }
 

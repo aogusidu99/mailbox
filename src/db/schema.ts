@@ -26,6 +26,38 @@ export type EmailAddress = { name?: string; address: string };
 export type UserSettings = { locale?: "zh-CN" | "en"; theme?: "system" | "light" | "dark" };
 export type ActionItem = { title: string; dueAt?: string; assignee?: string; done?: boolean };
 
+/** 邮件翻译目标语言（可在 AI 设置里增删；code 用 BCP-47，如 zh-CN / en / de / ja / fr） */
+export interface TranslationLang {
+  code: string;
+  label: string;
+}
+
+/** 每日摘要里对单封邮件的「处理意见」 */
+export type DigestActionType =
+  | "reply"
+  | "archive"
+  | "trash"
+  | "mark_read"
+  | "flag"
+  | "junk"
+  | "label"
+  | "todo"
+  | "unsubscribe"
+  | "none";
+
+export interface DigestDisposition {
+  messageId: string;
+  action: DigestActionType;
+  /** label：标签名；其它动作留空 */
+  value?: string;
+  /** 一句话说明为什么这样处理 */
+  reason: string;
+  /** action=reply 时给出的建议回复要点（供用户参考/补充后再生成邮件） */
+  replyPoints?: string;
+  /** 执行状态：pending 待处理 / done 已处理 / skipped 已跳过 */
+  status?: "pending" | "done" | "skipped";
+}
+
 /** 自然语言规则编译后的结构 */
 export interface RuleCondition {
   field: "from" | "to" | "subject" | "body" | "category" | "priority" | "hasAttachment" | "needsReply" | "listId";
@@ -92,6 +124,8 @@ export const mailAccounts = pgTable(
     /** 加密后的凭据 JSON（授权码或 OAuth token），见 server/crypto/secrets.ts */
     credentialsEnc: text("credentials_enc").notNull(),
     aiEnabled: boolean("ai_enabled").notNull().default(false),
+    /** 回复邮件时是否自动密送（BCC）一份给自己 */
+    bccSelfOnReply: boolean("bcc_self_on_reply").notNull().default(false),
     syncWindowDays: integer("sync_window_days").notNull().default(30),
     syncStatus: syncStatusEnum("sync_status").notNull().default("idle"),
     syncError: text("sync_error"),
@@ -284,7 +318,9 @@ export const aiSettings = pgTable("ai_settings", {
   ...timestamps,
 });
 
-/** 每日摘要缓存 */
+/**
+ * @deprecated 旧的每日摘要缓存，已被 digestReports 取代。保留表定义仅为避免破坏性迁移（缓存可再生），代码里不再使用。
+ */
 export const aiDigests = pgTable(
   "ai_digests",
   {
@@ -292,13 +328,84 @@ export const aiDigests = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    /** YYYY-MM-DD（本地日期） */
     day: text("day").notNull(),
     content: text("content").notNull(),
     model: text("model").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("ai_digests_user_day_uq").on(t.userId, t.day)],
+);
+
+/** 邮件翻译缓存（按 messageId + 目标语言去重） */
+export const messageTranslations = pgTable(
+  "message_translations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    /** 目标语言 BCP-47 code */
+    lang: text("lang").notNull(),
+    subject: text("subject"),
+    body: text("body").notNull(),
+    model: text("model").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("message_translations_msg_lang_uq").on(t.messageId, t.lang)],
+);
+
+/** 「和邮箱对话」会话（持久化历史，可多轮续聊） */
+export const chatThreads = pgTable(
+  "chat_threads",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull().default("新对话"),
+    ...timestamps,
+  },
+  (t) => [index("chat_threads_user_idx").on(t.userId, t.updatedAt)],
+);
+
+/** 会话里的一条消息（用户或助手；助手消息可带操作建议与检索轨迹） */
+export const chatMessages = pgTable(
+  "chat_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    threadId: uuid("thread_id")
+      .notNull()
+      .references(() => chatThreads.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    content: text("content").notNull(),
+    proposals: jsonb("proposals").$type<Record<string, unknown>[]>(),
+    trace: jsonb("trace").$type<Record<string, unknown>[]>(),
+    model: text("model"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("chat_messages_thread_idx").on(t.threadId, t.createdAt)],
+);
+
+/** 摘要报告缓存（按时间段：当天 / 本周 / 本月 / 自上次以来 / 自定义），含每封邮件的处理意见 */
+export const digestReports = pgTable(
+  "digest_reports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** 唯一键：day:YYYY-MM-DD / week:YYYY-MM-DD / month:YYYY-MM / since:<iso> / custom:<from>..<to> */
+    periodKey: text("period_key").notNull(),
+    /** day / week / month / since / custom */
+    kind: text("kind").notNull().default("day"),
+    fromTs: timestamp("from_ts", { withTimezone: true }).notNull(),
+    toTs: timestamp("to_ts", { withTimezone: true }).notNull(),
+    content: text("content"),
+    plan: jsonb("plan").$type<DigestDisposition[]>().notNull().default([]),
+    model: text("model"),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("digest_reports_user_period_uq").on(t.userId, t.periodKey)],
 );
 
 /** OAuth 应用凭据（Google Cloud / Azure 注册的 client id & secret），用于 Gmail / Outlook 授权登录 */
@@ -356,7 +463,7 @@ export const messageEmbeddings = pgTable(
   (t) => [uniqueIndex("message_embeddings_message_chunk_uq").on(t.messageId, t.chunkIndex), index("message_embeddings_account_idx").on(t.accountId)],
 );
 
-export type AiRole = "triage" | "summary" | "extract" | "draft" | "rules" | "chat" | "embedding";
+export type AiRole = "triage" | "summary" | "translate" | "extract" | "draft" | "rules" | "chat" | "embedding";
 export type AiEffort = "low" | "medium" | "high" | "xhigh" | "max";
 export interface AiRoleConfig {
   provider?: string;
@@ -388,6 +495,8 @@ export interface AiSettingsData {
   writeBack: { gmailLabels: boolean; imapFolders: boolean };
   /** 自动分析范围：只收件箱 / 全部文件夹 */
   autoTriageScope: "inbox" | "all";
+  /** 邮件翻译目标语言（可增删，默认 中/英/德） */
+  translationLangs: TranslationLang[];
 }
 
 // ---------- 推导类型 ----------
@@ -402,3 +511,7 @@ export type MailOp = typeof mailOps.$inferSelect;
 export type AiAnnotation = typeof aiAnnotations.$inferSelect;
 export type Rule = typeof rules.$inferSelect;
 export type MessageEmbedding = typeof messageEmbeddings.$inferSelect;
+export type MessageTranslation = typeof messageTranslations.$inferSelect;
+export type ChatThread = typeof chatThreads.$inferSelect;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type DigestReport = typeof digestReports.$inferSelect;

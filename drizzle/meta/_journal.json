@@ -36,6 +36,20 @@
       "when": 1789288523899,
       "tag": "0004_high_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789308786750,
+      "tag": "0005_swift_vengeance",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789310389046,
+      "tag": "0006_past_professor_monster",
+      "breakpoints": true
     }
   ]
 }

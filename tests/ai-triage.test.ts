@@ -8,7 +8,8 @@ process.env.ADMIN_PASSWORD = "password123";
 
 import { createDbHandle, setDbHandleForTests, type DbHandle } from "@/db";
 import { aiAnnotations, aiUsage, folders, mailAccounts, mailOps, messages, users } from "@/db/schema";
-import { dailyDigest, draftReply } from "@/server/ai/assist";
+import { draftReply } from "@/server/ai/assist";
+import { dailyDigest } from "@/server/ai/digest";
 import { runRole } from "@/server/ai/client";
 import { loadAiSettings, saveAiSettings } from "@/server/ai/settings";
 import { triageMessage } from "@/server/ai/triage";

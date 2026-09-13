@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { formatFullDate } from "@/lib/format";
-import { deleteAccountAction, resyncAccountAction, toggleAccountAiAction } from "./actions";
+import { deleteAccountAction, resyncAccountAction, toggleAccountAiAction, toggleAccountBccSelfAction } from "./actions";
 
 export interface AccountRowData {
   id: string;
@@ -30,6 +30,7 @@ export interface AccountRowData {
   syncError: string | null;
   lastSyncAt: string | null;
   aiEnabled: boolean;
+  bccSelfOnReply: boolean;
   syncWindowDays: number;
   authType: string;
 }
@@ -63,6 +64,14 @@ export function AccountRow({ account }: { account: AccountRowData }) {
       router.refresh();
     });
 
+  const toggleBccSelf = (enabled: boolean) =>
+    start(async () => {
+      const r = await toggleAccountBccSelfAction(account.id, enabled);
+      if (!r.ok) toast.error(r.error);
+      else toast.success(enabled ? "回复时将密送一份给自己" : "已关闭回复密送自己");
+      router.refresh();
+    });
+
   return (
     <div className="flex flex-wrap items-center gap-3 py-3">
       <div className="min-w-0 flex-1">
@@ -88,6 +97,10 @@ export function AccountRow({ account }: { account: AccountRowData }) {
       <label className="flex items-center gap-2 text-xs text-muted-foreground">
         AI 处理
         <Switch checked={account.aiEnabled} onCheckedChange={(v) => toggleAi(Boolean(v))} disabled={pending} />
+      </label>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground" title="回复邮件时自动密送（BCC）一份到本邮箱，方便留底">
+        回复密送自己
+        <Switch checked={account.bccSelfOnReply} onCheckedChange={(v) => toggleBccSelf(Boolean(v))} disabled={pending} />
       </label>
       <Button variant="outline" size="sm" onClick={resync} disabled={pending}>
         {pending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} 立即同步
