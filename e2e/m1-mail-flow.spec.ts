@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { FAKE_IMAP_PORT, FAKE_PASS, FAKE_SMTP_PORT, FAKE_USER, startFakeMailServers, type FakeMailServers } from "./fake-mail-server";
-import { login, removeAccountIfExists } from "./helpers";
+import { login, removeAccountIfExists, waitForInbox } from "./helpers";
 
 /**
  * M1 验收：登录 → 添加邮箱（本地假 IMAP，含测试连接）→ 同步 → 列表 → 阅读正文与附件。
@@ -38,9 +38,10 @@ test("登录后添加邮箱并阅读同步下来的邮件", async ({ page }) => 
   await page.getByRole("button", { name: "保存并开始同步" }).click();
   await page.waitForURL(/\/mail(\/|$)/);
 
-  // 侧栏出现收件箱（首次同步完成后自动跳转）
-  await expect(page.getByRole("link", { name: /收件箱/ }).first()).toBeVisible({ timeout: 60_000 });
-  await page.getByRole("link", { name: /收件箱/ }).first().click();
+  // 等假账号的收件箱同步出来后直接进入（本地可能还有真实账号，不能只点第一个「收件箱」）
+  const { accountId, folderId } = await waitForInbox(page, FAKE_USER);
+  await page.goto(`/mail/${accountId}/${folderId}`);
+  await expect(page.getByRole("link", { name: /收件箱/ }).first()).toBeVisible();
 
   // 列表里有同步下来的邮件
   const row = page.getByRole("button", { name: /发票已开具/ });

@@ -31,7 +31,8 @@ export default async function MailLayout({ children }: LayoutProps<"/mail">) {
           </MobileSidebar>
           <span className="font-semibold">Mailbox</span>
         </div>
-        <div className="min-h-0 flex-1">{children}</div>
+        {/* 内容区自己滚动：邮件工作区内部用 h-full，设置类长页面在这里滚动 */}
+        <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       </div>
     </div>
   );

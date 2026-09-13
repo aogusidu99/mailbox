@@ -1,3 +1,4 @@
+import * as React from "react"
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
@@ -43,12 +44,19 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  nativeButton,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  // 通过 render 渲染成 <a> / <Link> 等非原生按钮时，告诉 Base UI 不要按原生 <button> 校验，
+  // 否则控制台会报 "expected a native <button>"。
+  const renderedIsNativeButton =
+    props.render == null ||
+    (React.isValidElement(props.render) && props.render.type === "button")
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      nativeButton={nativeButton ?? renderedIsNativeButton}
       {...props}
     />
   )

@@ -51,10 +51,11 @@ export const OAUTH_PROVIDERS: Record<OAuthProviderId, OAuthProviderConfig> = {
     presetId: "outlook",
     help: [
       "打开 https://portal.azure.com/ →「Microsoft Entra ID → 应用注册 → 新注册」。",
-      "支持的账户类型选「任何组织目录中的账户和个人 Microsoft 账户」；重定向 URI 平台选「Web」，填下面显示的回调地址。",
-      "「证书和密码 → 新客户端密码」生成密钥（注意复制的是「值」不是「密码 ID」）。",
-      "「API 权限」添加 Office 365 Exchange Online 的 IMAP.AccessAsUser.All、SMTP.Send，以及 openid、email、offline_access。",
-      "把应用程序（客户端）ID 与密钥填到这里保存，然后点「连接 Outlook 账号」。",
+      "「支持的账户类型」必须选第三项「任何组织目录中的账户（多租户）和个人 Microsoft 账户（例如 Skype、Xbox）」；默认的「仅此组织目录」会让 outlook.com / hotmail.com 个人账号报「does not exist in tenant」。已建好的应用可在「身份验证 → 支持的账户类型」里改，或把清单里的 signInAudience 改为 AzureADandPersonalMicrosoftAccount。",
+      "重定向 URI 平台选「Web」，填下面显示的回调地址（本地是 http://localhost:3000/...，Azure 允许 localhost 用 http）。",
+      "「证书和密码 → 新客户端密码」生成密钥（复制的是「值」不是「密码 ID」）。",
+      "「API 权限 → 添加权限 → 我的组织使用的 API」搜索 Office 365 Exchange Online，勾选委托权限 IMAP.AccessAsUser.All、SMTP.Send；再在 Microsoft Graph 里加 openid、email、offline_access。",
+      "把「应用程序（客户端）ID」与密钥填到这里保存，然后点「连接 Outlook 账号」。",
     ],
   },
 };
