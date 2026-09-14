@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
-import { aiAnnotations, folders, mailAccounts, messages, rules, type CompiledRule, type Message, type Rule } from "@/db/schema";
+import { aiAnnotations, folders, mailAccounts, messages, rules, type CompiledRule, type Message, type Rule, type RuleAction, type RuleCondition } from "@/db/schema";
 import { stripHtml } from "@/lib/quote";
 import { deleteMessages, enqueueRawOperation, loadOwnedMessages, markMessages, moveMessages, setGmailLabels } from "@/server/mail/ops";
 import { runRole } from "./client";
@@ -11,31 +11,34 @@ import { runRole } from "./client";
  * 新邮件（拉取正文 / AI 分类后）逐条匹配并执行，动作经 outbox 同步到服务器。
  */
 
+// schema 尽量宽容（兼容 DeepSeek 等非严格 JSON 厂商）：字段用 string + .catch 兜底，
+// 真正的合法性校验放到 normalizeCompiled 里做（过滤非法项 + 友好报错）。
 export const compiledRuleSchema = z.object({
-  name: z.string().min(1).max(60),
-  match: z.enum(["all", "any"]),
+  name: z.string().catch(""),
+  match: z.enum(["all", "any"]).catch("all"),
   conditions: z
     .array(
       z.object({
-        field: z.enum(["from", "to", "subject", "body", "category", "priority", "hasAttachment", "needsReply", "listId"]),
-        op: z.enum(["contains", "not_contains", "equals", "starts_with", "ends_with", "matches", "is_true", "is_false"]),
-        // AI 输出用 null，前端回传时 undefined 会被 JSON 丢掉，两种都接受
-        value: z.string().max(200).nullable().optional(),
+        field: z.string().catch(""),
+        op: z.string().catch(""),
+        value: z.string().nullish(),
       }),
     )
-    .min(1)
-    .max(8),
+    .catch([]),
   actions: z
     .array(
       z.object({
-        type: z.enum(["archive", "trash", "mark_read", "mark_unread", "flag", "junk", "move", "label"]),
-        value: z.string().max(120).nullable().optional(),
+        type: z.string().catch(""),
+        value: z.string().nullish(),
       }),
     )
-    .min(1)
-    .max(5),
-  stopProcessing: z.boolean().optional(),
+    .catch([]),
+  stopProcessing: z.boolean().nullish(),
 });
+
+const RULE_FIELDS = new Set<RuleCondition["field"]>(["from", "to", "subject", "body", "category", "priority", "hasAttachment", "needsReply", "listId"]);
+const RULE_OPS = new Set<RuleCondition["op"]>(["contains", "not_contains", "equals", "starts_with", "ends_with", "matches", "is_true", "is_false"]);
+const RULE_ACTIONS = new Set<RuleAction["type"]>(["archive", "trash", "mark_read", "mark_unread", "flag", "junk", "move", "label"]);
 
 export const RULES_SYSTEM = `你是邮件规则编译器。把用户用自然语言描述的邮件处理规则，转换成结构化 JSON 规则。
 
@@ -50,14 +53,22 @@ export const RULES_SYSTEM = `你是邮件规则编译器。把用户用自然语
 
 export type CompiledRuleInput = z.infer<typeof compiledRuleSchema>;
 
-function normalizeCompiled(input: CompiledRuleInput): CompiledRule {
-  return {
-    name: input.name,
-    match: input.match,
-    conditions: input.conditions.map((c) => ({ field: c.field, op: c.op, value: c.value ?? undefined })),
-    actions: input.actions.map((a) => ({ type: a.type, value: a.value ?? undefined })),
-    stopProcessing: input.stopProcessing ?? false,
-  };
+export function normalizeCompiled(input: CompiledRuleInput): CompiledRule {
+  const conditions = input.conditions
+    .filter((c) => RULE_FIELDS.has(c.field as RuleCondition["field"]) && RULE_OPS.has(c.op as RuleCondition["op"]))
+    .map((c) => ({ field: c.field as RuleCondition["field"], op: c.op as RuleCondition["op"], value: c.value ?? undefined }))
+    .slice(0, 8);
+  const actions = input.actions
+    .filter((a) => RULE_ACTIONS.has(a.type as RuleAction["type"]))
+    .map((a) => ({ type: a.type as RuleAction["type"], value: a.value ?? undefined }))
+    .slice(0, 5);
+  if (actions.length === 0) {
+    throw new Error("没识别到要执行的动作。规则是对每封邮件做动作（归档 / 星标 / 移动 / 删除 / 标记已读等），不是定时任务；请描述具体动作，例如「把发票邮件归档到 Finance」。");
+  }
+  if (conditions.length === 0) {
+    throw new Error("没识别到匹配条件（发件人 / 主题 / 分类等），请更具体地描述这条规则针对哪些邮件。");
+  }
+  return { name: input.name || "规则", match: input.match, conditions, actions, stopProcessing: input.stopProcessing ?? false };
 }
 
 /** 自然语言 → 结构化规则 */

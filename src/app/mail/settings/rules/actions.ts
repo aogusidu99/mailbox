@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { CompiledRule } from "@/db/schema";
-import { compileRule, compiledRuleSchema, createRule, deleteRule, listRules, previewRule, runRuleNow, updateRule } from "@/server/ai/rules";
+import { compileRule, compiledRuleSchema, createRule, deleteRule, listRules, normalizeCompiled, previewRule, runRuleNow, updateRule } from "@/server/ai/rules";
 import { requireUser } from "@/server/auth/session";
 
 type ActionResult<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
@@ -16,14 +16,7 @@ async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
 }
 
 function normalize(raw: unknown): CompiledRule {
-  const parsed = compiledRuleSchema.parse(raw);
-  return {
-    name: parsed.name,
-    match: parsed.match,
-    conditions: parsed.conditions.map((c) => ({ field: c.field, op: c.op, value: c.value ?? undefined })),
-    actions: parsed.actions.map((a) => ({ type: a.type, value: a.value ?? undefined })),
-    stopProcessing: parsed.stopProcessing ?? false,
-  };
+  return normalizeCompiled(compiledRuleSchema.parse(raw));
 }
 
 export async function compileRuleAction(naturalText: string) {
