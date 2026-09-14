@@ -472,7 +472,7 @@ export function AiSettingsPanel({
             <span>把摘要发一封邮件到自己邮箱（用最早添加的账号收发）</span>
             <Switch checked={view.data.dailyDigest.email} disabled={pending || !view.data.dailyDigest.enabled} onCheckedChange={(v) => apply(saveDailyDigestAction({ email: Boolean(v) }))} />
           </label>
-          <p className="text-xs text-muted-foreground">分析前一天收件箱邮件（最多 40 封）。开启后到设定时间的下一个检查点（每 10 分钟一次）自动运行；结果也会出现在「每日摘要」页。</p>
+          <p className="text-xs text-muted-foreground">分析前一天收件箱的全部邮件。开启后到设定时间的下一个检查点（每 10 分钟一次）自动运行；结果也会出现在「每日摘要」页。</p>
         </CardContent>
       </Card>
 

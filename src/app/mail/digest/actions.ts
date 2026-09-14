@@ -25,7 +25,8 @@ async function run<T>(fn: () => Promise<T>): Promise<ActionResult<T>> {
 export async function refreshDigestAction(kind: DigestKind, opts: RangeOptions) {
   return run(async () => {
     const user = await requireUser();
-    const r = await generateDigest(user.id, kind, { ...opts, refresh: true, withPlan: true, analyze: true });
+    // 前台按钮同步请求，限 40 封防超时；每日定时摘要（后台）不设限、分析全部
+    const r = await generateDigest(user.id, kind, { ...opts, refresh: true, withPlan: true, analyze: true, analyzeCap: 40 });
     return { periodKey: r.range.periodKey, content: r.content, plan: r.plan, model: r.model, items: r.items };
   });
 }

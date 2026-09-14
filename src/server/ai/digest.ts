@@ -239,20 +239,23 @@ async function upsert(userId: string, range: ResolvedRange, content: string | nu
     });
 }
 
-/** 按需分析：把时间段内收件箱中「还没分析过」的邮件即时跑一遍 triage（最多 cap 封），供页面「生成」时用。 */
-async function analyzeRangeInbox(userId: string, fromTs: Date, toTs: Date, cap = 40): Promise<number> {
+/**
+ * 按需分析：把时间段内收件箱中「还没分析过」的邮件即时跑一遍 triage。
+ * cap 为上限（前台「生成」按钮传一个数防超时）；不传 = 分析全部（每日定时摘要后台跑，不设限）。
+ */
+async function analyzeRangeInbox(userId: string, fromTs: Date, toTs: Date, cap?: number): Promise<number> {
   const db = await getDb();
   const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
   if (accounts.length === 0) return 0;
   const inboxes = await db.query.folders.findMany({ where: and(inArray(folders.accountId, accounts.map((a) => a.id)), eq(folders.role, "inbox")) });
   if (inboxes.length === 0) return 0;
-  const rows = await db
+  const q = db
     .select({ id: messages.id, accountId: messages.accountId })
     .from(messages)
     .leftJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
     .where(and(inArray(messages.folderId, inboxes.map((f) => f.id)), gte(messages.date, fromTs), lt(messages.date, toTs), isNull(aiAnnotations.id)))
-    .orderBy(desc(messages.date))
-    .limit(cap);
+    .orderBy(desc(messages.date));
+  const rows = cap && cap > 0 ? await q.limit(cap) : await q;
   const { triageMessage } = await import("./triage");
   let n = 0;
   for (const r of rows) {
@@ -269,12 +272,14 @@ export interface GenerateDigestOptions extends RangeOptions {
   withPlan?: boolean;
   /** 生成前先即时分析该时间段内未分析的收件箱邮件（页面「生成」按钮用） */
   analyze?: boolean;
+  /** 即时分析的封数上限；不传 = 全部（每日定时摘要用）。前台按钮传一个数防超时。 */
+  analyzeCap?: number;
 }
 
 export async function generateDigest(userId: string, kind: DigestKind, opts: GenerateDigestOptions = {}): Promise<DigestResult> {
   const db = await getDb();
   const range = await resolveRange(userId, kind, opts);
-  if (opts.analyze) await analyzeRangeInbox(userId, range.fromTs, range.toTs);
+  if (opts.analyze) await analyzeRangeInbox(userId, range.fromTs, range.toTs, opts.analyzeCap);
   const items = await digestItemsInRange(userId, range.fromTs, range.toTs);
 
   const cached = await db.query.digestReports.findFirst({ where: and(eq(digestReports.userId, userId), eq(digestReports.periodKey, range.periodKey)) });
