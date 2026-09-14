@@ -497,6 +497,16 @@ export interface AiSettingsData {
   autoTriageScope: "inbox" | "all";
   /** 邮件翻译目标语言（可增删，默认 中/英/德） */
   translationLangs: TranslationLang[];
+  /** 每日定时摘要：每天定点自动分析前一天邮件并生成摘要，可选发邮件到自己 */
+  dailyDigest: {
+    enabled: boolean;
+    /** 本地小时 0-23（服务器时区） */
+    hour: number;
+    /** 是否把摘要作为一封邮件发到自己邮箱 */
+    email: boolean;
+    /** 内部：上次自动运行的日期 YYYY-MM-DD，防止同一天重复运行 */
+    lastRunDate?: string;
+  };
 }
 
 // ---------- 推导类型 ----------

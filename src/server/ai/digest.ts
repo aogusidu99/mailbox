@@ -1,8 +1,9 @@
 import { and, desc, eq, gte, inArray, isNull, lt, ne } from "drizzle-orm";
 import { getDb } from "@/db";
-import { aiAnnotations, digestReports, folders, mailAccounts, messages, type DigestDisposition } from "@/db/schema";
+import { aiSettings, aiAnnotations, digestReports, folders, mailAccounts, messages, type AiSettingsData, type DigestDisposition } from "@/db/schema";
 import { deleteMessages, markMessages, moveMessages, setGmailLabels } from "@/server/mail/ops";
 import { runRole } from "./client";
+import { loadAiSettings } from "./settings";
 import {
   CATEGORY_LABELS,
   DIGEST_PLAN_SYSTEM,
@@ -448,4 +449,73 @@ async function loadOwnedForLabel(userId: string, messageId: string): Promise<Arr
   const { loadOwnedMessages } = await import("@/server/mail/ops");
   const rows = await loadOwnedMessages(userId, [messageId]);
   return rows.map((r) => ({ accountId: r.account.id, folderPath: r.folder.path, uid: r.message.uid }));
+}
+
+// ---------- 每日定时摘要（worker 调用） ----------
+
+/** 前一天的本地日期 YYYY-MM-DD */
+function yesterdayKey(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return dateKey(d);
+}
+
+/** 把每日摘要配置写回 ai_settings（用于记录 lastRunDate，防同一天重复运行） */
+async function saveDailyDigestState(userId: string, dailyDigest: AiSettingsData["dailyDigest"]): Promise<void> {
+  const db = await getDb();
+  const row = await db.query.aiSettings.findFirst({ where: eq(aiSettings.userId, userId) });
+  if (!row) return;
+  await db.update(aiSettings).set({ data: { ...row.data, dailyDigest } }).where(eq(aiSettings.userId, userId));
+}
+
+/**
+ * worker 每隔几分钟调用一次：到达配置的小时、且今天还没跑过，就为每个开启的用户
+ * 分析前一天的收件箱邮件、生成摘要与处理意见，并按需把摘要发一封邮件到自己邮箱。
+ */
+export async function runDailyDigests(): Promise<void> {
+  const db = await getDb();
+  const hour = new Date().getHours();
+  const today = todayKey();
+  const allUsers = await db.query.users.findMany();
+  for (const user of allUsers) {
+    let cfg: AiSettingsData["dailyDigest"];
+    try {
+      cfg = (await loadAiSettings(user.id)).data.dailyDigest;
+    } catch {
+      continue;
+    }
+    if (!cfg?.enabled || hour !== cfg.hour || cfg.lastRunDate === today) continue;
+    // 先占位（防止同一小时内多次 tick、或生成较慢时重复运行）
+    await saveDailyDigestState(user.id, { ...cfg, lastRunDate: today });
+    try {
+      const day = yesterdayKey();
+      const result = await generateDigest(user.id, "day", { day, withPlan: true, analyze: true, refresh: true });
+      console.log(`[digest] ${user.email} 每日摘要（${day}）已生成，${result.items.length} 封`);
+      if (cfg.email && result.content) await emailDigestToSelf(user.id, day, result);
+    } catch (err) {
+      console.error(`[digest] ${user.email} 每日摘要失败:`, err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+/** 把摘要作为一封邮件发到用户自己的邮箱（用最早添加的账号收发） */
+async function emailDigestToSelf(userId: string, day: string, result: DigestResult): Promise<void> {
+  const db = await getDb();
+  const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId), orderBy: (t, { asc }) => [asc(t.createdAt)] });
+  const account = accounts[0];
+  if (!account) return;
+  const lines: string[] = [result.content ?? "（今天没有可摘要的邮件）"];
+  const planById = new Map(result.plan.map((p) => [p.messageId, p]));
+  const needAction = result.items.filter((i) => {
+    const d = planById.get(i.messageId);
+    return i.needsReply || i.priority === "high" || (d && (d.action === "reply" || d.action === "flag" || d.action === "todo"));
+  });
+  if (needAction.length) {
+    lines.push("", `—— 需要处理 / 需回复（${needAction.length}）——`);
+    for (const i of needAction) lines.push(`· ${i.from}：${i.subject ?? "(无主题)"}${i.summary ? ` — ${i.summary}` : ""}`);
+  }
+  lines.push("", "（本邮件由 Mailbox 每日摘要自动发送）");
+  const { sendMail } = await import("@/server/mail/send");
+  await sendMail(userId, account.id, { to: account.email, subject: `每日邮件摘要 · ${day}`, text: lines.join("\n"), attachments: [] });
+  console.log(`[digest] 每日摘要邮件已发送到 ${account.email}`);
 }

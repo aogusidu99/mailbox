@@ -179,6 +179,14 @@ export async function saveTranslationLangsAction(langs: Array<{ code: string; la
   });
 }
 
+export async function saveDailyDigestAction(patch: Partial<AiSettingsData["dailyDigest"]>) {
+  return run(async () => {
+    const user = await requireUser();
+    await saveAiSettings(user.id, (s) => ({ ...s, data: { ...s.data, dailyDigest: { ...s.data.dailyDigest, ...patch } } }));
+    return view(user.id);
+  });
+}
+
 export async function backfillTriageAction(accountId: string | null, limit: number) {
   return run(async () => {
     const user = await requireUser();

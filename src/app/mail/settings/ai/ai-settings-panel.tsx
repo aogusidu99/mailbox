@@ -20,6 +20,7 @@ import {
   removeCustomProviderAction,
   saveBehaviorAction,
   saveCandidatesAction,
+  saveDailyDigestAction,
   saveDefaultsAction,
   saveProviderKeyAction,
   saveRoleAction,
@@ -438,6 +439,40 @@ export function AiSettingsPanel({
               回填最近 500 封
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* 每日定时摘要 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>每日定时摘要</CardTitle>
+          <CardDescription>每天定点自动分析前一天的收件箱邮件、生成摘要与处理意见（后台运行，需配好可用的模型）。可选把摘要作为一封邮件发到你自己的邮箱。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <label className="flex items-center justify-between gap-4">
+            <span>开启每日定时摘要</span>
+            <Switch checked={view.data.dailyDigest.enabled} disabled={pending} onCheckedChange={(v) => apply(saveDailyDigestAction({ enabled: Boolean(v) }))} />
+          </label>
+          <label className="flex items-center justify-between gap-4">
+            <span>每天运行时间（服务器本地时间）</span>
+            <select
+              className={selectClass}
+              value={view.data.dailyDigest.hour}
+              disabled={pending || !view.data.dailyDigest.enabled}
+              onChange={(e) => apply(saveDailyDigestAction({ hour: Number(e.target.value) }))}
+            >
+              {Array.from({ length: 24 }, (_, h) => (
+                <option key={h} value={h}>
+                  {String(h).padStart(2, "0")}:00
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center justify-between gap-4">
+            <span>把摘要发一封邮件到自己邮箱（用最早添加的账号收发）</span>
+            <Switch checked={view.data.dailyDigest.email} disabled={pending || !view.data.dailyDigest.enabled} onCheckedChange={(v) => apply(saveDailyDigestAction({ email: Boolean(v) }))} />
+          </label>
+          <p className="text-xs text-muted-foreground">分析前一天收件箱邮件（最多 40 封）。开启后到设定时间的下一个检查点（每 10 分钟一次）自动运行；结果也会出现在「每日摘要」页。</p>
         </CardContent>
       </Card>
 

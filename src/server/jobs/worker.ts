@@ -37,6 +37,7 @@ interface WorkerState {
 const HEARTBEAT_INTERVAL_MS = 60_000;
 const ACCOUNT_SYNC_INTERVAL_MS = 5 * 60_000;
 const IDLE_RECONCILE_INTERVAL_MS = 60_000;
+const DAILY_DIGEST_CHECK_INTERVAL_MS = 10 * 60_000;
 
 const globalRef = globalThis as unknown as { __mailboxWorker?: WorkerState };
 
@@ -138,6 +139,8 @@ export function startWorker(): Promise<void> {
     tick(() => enqueue(QUEUES.heartbeat, { at: Date.now() }, { singletonKey: "heartbeat" }).then(() => undefined), HEARTBEAT_INTERVAL_MS, true);
     tick(() => scheduleAllAccounts("scheduled"), ACCOUNT_SYNC_INTERVAL_MS, true);
     tick(() => getIdleManager().reconcile(), IDLE_RECONCILE_INTERVAL_MS, true);
+    // 每日定时摘要：每 10 分钟检查一次，到点则自动生成前一天摘要（+可选发邮件）
+    tick(() => import("@/server/ai/digest").then((m) => m.runDailyDigests()), DAILY_DIGEST_CHECK_INTERVAL_MS, false);
 
     s.status.started = true;
     s.status.startedAt = new Date().toISOString();

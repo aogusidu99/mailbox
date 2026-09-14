@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS: AiSettingsData = {
   writeBack: { gmailLabels: true, imapFolders: false },
   autoTriageScope: "inbox",
   translationLangs: DEFAULT_TRANSLATION_LANGS,
+  dailyDigest: { enabled: false, hour: 8, email: false },
 };
 
 export type PresetId = "quality" | "balanced" | "economy";
@@ -101,6 +102,7 @@ function normalize(data: Partial<AiSettingsData> | undefined): AiSettingsData {
   merged.customProviders = [...(data?.customProviders ?? [])];
   merged.writeBack = { ...DEFAULT_SETTINGS.writeBack, ...(data?.writeBack ?? {}) };
   merged.translationLangs = data?.translationLangs?.length ? [...data.translationLangs] : [...DEFAULT_TRANSLATION_LANGS];
+  merged.dailyDigest = { ...DEFAULT_SETTINGS.dailyDigest, ...(data?.dailyDigest ?? {}) };
   // 内置厂商没有候选池时用兜底列表填充
   for (const p of BUILT_IN_PROVIDERS) {
     if (!merged.candidates[p.id] || merged.candidates[p.id].length === 0) merged.candidates[p.id] = [...p.fallbackModels];
