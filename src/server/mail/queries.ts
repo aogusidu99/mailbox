@@ -4,7 +4,7 @@ import path from "node:path";
 import { getDb } from "@/db";
 import { aiAnnotations, attachments, folders, mailAccounts, messages, type Message } from "@/db/schema";
 import type { AttachmentDto, MessageDetail, MessageListItem, MessageListResponse, SidebarData } from "@/lib/api-types";
-import { withProvider } from "@/server/providers/factory";
+import { withWarmProvider } from "@/server/providers/warm-pool";
 import { sanitizeEmailHtml, textToHtml } from "./html";
 import { ensureMessageBody } from "@/server/sync/engine";
 import { FOLDER_ROLE_ORDER } from "@/server/sync/engine";
@@ -247,7 +247,7 @@ export async function getAttachmentContent(
   if (att.cachedPath && existsSync(att.cachedPath)) {
     return { content: readFileSync(att.cachedPath), filename, mimeType };
   }
-  const fetched = await withProvider(account, (provider) => provider.fetchAttachment(folder.path, message.uid, att.part));
+  const fetched = await withWarmProvider(account, (provider) => provider.fetchAttachment(folder.path, message.uid, att.part));
   const dir = path.join(ATTACHMENT_DIR, message.id);
   mkdirSync(/*turbopackIgnore: true*/ dir, { recursive: true });
   const file = path.join(dir, att.part.replace(/[^0-9a-zA-Z.]/g, "_"));

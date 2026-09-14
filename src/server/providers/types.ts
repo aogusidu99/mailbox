@@ -109,6 +109,8 @@ export interface IdleHandlers {
 
 export interface MailProvider {
   readonly capabilities: ProviderCapabilities;
+  /** 底层连接当前是否可用（热连接池复用前用来判断是否已失活）。 */
+  readonly usable: boolean;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   listFolders(): Promise<RemoteFolder[]>;

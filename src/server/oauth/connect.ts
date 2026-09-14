@@ -16,9 +16,17 @@ import { buildAuthUrl, createPkce, exchangeCode, fetchIdentityEmail, OAUTH_PROVI
 
 export const OAUTH_COOKIE = "mailbox_oauth";
 
+/**
+ * 面向浏览器的基址：优先 APP_BASE_URL。
+ * 反代 / 隧道（Tailscale serve）下，进入容器的请求 origin 往往是内网监听地址（如 http://0.0.0.0:3000），
+ * 直接用它拼跳转会把用户甩到打不开的地址；配置了 APP_BASE_URL 时一律以它为准。
+ */
+export function appBaseUrl(fallbackOrigin: string): string {
+  return getEnv().APP_BASE_URL?.replace(/\/+$/, "") || fallbackOrigin;
+}
+
 export function redirectUriFor(origin: string, provider: OAuthProviderId): string {
-  const base = getEnv().APP_BASE_URL?.replace(/\/+$/, "") || origin;
-  return `${base}/api/oauth/${provider}/callback`;
+  return `${appBaseUrl(origin)}/api/oauth/${provider}/callback`;
 }
 
 export async function startOAuth(userId: string, provider: OAuthProviderId, origin: string, loginHint?: string): Promise<{ url: string; cookieValue: string }> {

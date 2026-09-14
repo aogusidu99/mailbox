@@ -245,6 +245,10 @@ export class ImapProvider implements MailProvider {
     return this.caps;
   }
 
+  get usable(): boolean {
+    return Boolean(this.client?.usable);
+  }
+
   private makeClient(opts: { autoIdle: boolean }): ImapFlow {
     return new ImapFlow({
       host: this.cfg.imap.host,

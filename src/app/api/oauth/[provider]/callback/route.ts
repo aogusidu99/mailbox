@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { completeOAuth, OAUTH_COOKIE } from "@/server/oauth/connect";
+import { appBaseUrl, completeOAuth, OAUTH_COOKIE } from "@/server/oauth/connect";
 import { OAUTH_PROVIDERS, type OAuthProviderId } from "@/server/oauth/providers";
 
 export const dynamic = "force-dynamic";
@@ -9,8 +9,10 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/oauth/[provi
   const { provider } = await ctx.params;
   if (!(provider in OAUTH_PROVIDERS)) return NextResponse.json({ error: "未知的 OAuth 厂商" }, { status: 404 });
   const sp = req.nextUrl.searchParams;
+  // 反代/隧道下 req.nextUrl.origin 可能是容器内网地址（0.0.0.0:3000），跳转一律以 APP_BASE_URL 为准
+  const base = appBaseUrl(req.nextUrl.origin);
   const fail = (message: string) => {
-    const res = NextResponse.redirect(new URL(`/mail/settings/oauth?error=${encodeURIComponent(message)}`, req.nextUrl));
+    const res = NextResponse.redirect(new URL(`/mail/settings/oauth?error=${encodeURIComponent(message)}`, base));
     res.cookies.delete(OAUTH_COOKIE);
     return res;
   };
@@ -26,7 +28,7 @@ export async function GET(req: NextRequest, ctx: RouteContext<"/api/oauth/[provi
       cookieValue: req.cookies.get(OAUTH_COOKIE)?.value,
       origin: req.nextUrl.origin,
     });
-    const res = NextResponse.redirect(new URL(`/mail?connected=${encodeURIComponent(result.email)}`, req.nextUrl));
+    const res = NextResponse.redirect(new URL(`/mail?connected=${encodeURIComponent(result.email)}`, base));
     res.cookies.delete(OAUTH_COOKIE);
     return res;
   } catch (err) {
