@@ -36,20 +36,21 @@ export const CATEGORY_LABEL_NAMES: Record<Category, string> = {
   other: "AI/Other",
 };
 
+// schema 尽量宽容：DeepSeek 等厂商可能少字段 / 类型不符 / 值超范围，用 .catch/.nullish 兜底避免整体失败
 export const triageSchema = z.object({
-  category: z.enum(CATEGORIES),
-  priority: z.enum(["high", "normal", "low"]),
-  needsReply: z.boolean(),
-  summary: z.string().max(200),
+  category: z.enum(CATEGORIES).catch("other"),
+  priority: z.enum(["high", "normal", "low"]).catch("normal"),
+  needsReply: z.boolean().catch(false),
+  summary: z.string().catch(""),
   actionItems: z
     .array(
       z.object({
-        title: z.string().max(120),
-        dueAt: z.string().max(40).nullable(),
+        title: z.string().catch(""),
+        dueAt: z.string().nullish(),
       }),
     )
-    .max(8),
-  reason: z.string().max(200),
+    .catch([]),
+  reason: z.string().catch(""),
 });
 export type TriageOutput = z.infer<typeof triageSchema>;
 
@@ -119,8 +120,8 @@ export function languageName(code: string): string {
 }
 
 export const translateSchema = z.object({
-  subject: z.string(),
-  body: z.string(),
+  subject: z.string().catch(""),
+  body: z.string().catch(""),
 });
 export type TranslateOutput = z.infer<typeof translateSchema>;
 
@@ -139,14 +140,14 @@ export const digestDispositionSchema = z.object({
   dispositions: z
     .array(
       z.object({
-        messageId: z.string(),
-        action: z.enum(["reply", "archive", "trash", "mark_read", "flag", "junk", "label", "todo", "unsubscribe", "none"]),
-        value: z.string().max(80).nullable(),
-        reason: z.string().max(160),
-        replyPoints: z.string().max(400).nullable(),
+        messageId: z.string().catch(""),
+        action: z.enum(["reply", "archive", "trash", "mark_read", "flag", "junk", "label", "todo", "unsubscribe", "none"]).catch("none"),
+        value: z.string().nullish(),
+        reason: z.string().catch(""),
+        replyPoints: z.string().nullish(),
       }),
     )
-    .max(120),
+    .catch([]),
 });
 export type DigestDispositionOutput = z.infer<typeof digestDispositionSchema>;
 
