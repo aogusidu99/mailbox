@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, Loader2, RefreshCw, Send, Sparkles, Wand2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Loader2, RefreshCw, Reply, Send, Sparkles, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
@@ -38,6 +38,26 @@ const DISPOSITION_ORDER: DigestActionType[] = ["reply", "flag", "todo", "label",
 function isAuto(action: DigestActionType): boolean {
   return action !== "reply" && action !== "none";
 }
+
+/** 把邮件按处理意见/分类归到三类：需处理·值得看·广告垃圾 */
+type Bucket = "action" | "read" | "junk";
+const PROMO_CATS = ["promotion", "newsletter", "social"];
+function bucketOf(i: DigestItem, d?: DigestDisposition): Bucket {
+  const a = d?.action;
+  if (a === "reply" || a === "todo" || a === "flag") return "action";
+  if (a === "trash" || a === "junk" || a === "unsubscribe") return "junk";
+  if (a === "archive" || a === "mark_read" || a === "label" || a === "none") {
+    return PROMO_CATS.includes(i.category ?? "") ? "junk" : "read";
+  }
+  // 还没有处理意见时按 AI 信号兜底
+  if (i.needsReply || i.priority === "high") return "action";
+  return PROMO_CATS.includes(i.category ?? "") ? "junk" : "read";
+}
+const SECTIONS: Array<{ key: Bucket; label: string }> = [
+  { key: "action", label: "需要处理 / 需回复" },
+  { key: "read", label: "值得一看（重要，不必回复）" },
+  { key: "junk", label: "广告 / 垃圾邮件" },
+];
 
 const PERIODS: Array<{ kind: DigestKind; label: string }> = [
   { kind: "day", label: "当天" },
@@ -100,11 +120,12 @@ export function DigestView(props: {
   model: string | null;
   error: string | null;
 }) {
-  const { kind, day, periodKey, label, items } = props;
+  const { kind, day, periodKey, label } = props;
   const router = useRouter();
   const [pending, start] = useTransition();
   const [replyPending, startReply] = useTransition();
 
+  const [items, setItems] = useState<DigestItem[]>(props.items);
   const [content, setContent] = useState(props.content);
   const [plan, setPlan] = useState<DigestDisposition[]>(props.plan);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -133,10 +154,11 @@ export function DigestView(props: {
         toast.error(r.error);
         return;
       }
+      setItems(r.data.items);
       setContent(r.data.content);
       setPlan(r.data.plan);
       setSelected(new Set());
-      toast.success("已生成摘要与处理意见");
+      toast.success(r.data.items.length ? "已生成摘要与处理意见" : "这个时间段没有邮件可分析");
     });
 
   const applyNl = () =>
@@ -224,6 +246,84 @@ export function DigestView(props: {
       router.refresh();
     });
 
+  const renderItem = (i: DigestItem) => {
+    const d = planById.get(i.messageId);
+    const done = d?.status === "done";
+    const canSelect = Boolean(d && isAuto(d.action) && !done);
+    const showReply = bucketOf(i, d) === "action" && !done;
+    return (
+      <div key={i.messageId} className={cn("space-y-1.5 px-4 py-3", done && "opacity-60")}>
+        <div className="flex items-start gap-2">
+          {generated ? (
+            <input type="checkbox" className="mt-1" disabled={!canSelect} checked={selected.has(i.messageId)} onChange={(e) => toggleSelect(i.messageId, e.target.checked)} />
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cn("rounded px-1 text-[10px]", i.priority === "high" ? "bg-red-100 text-red-700" : "bg-muted text-muted-foreground")}>{i.categoryLabel}</span>
+              {i.needsReply ? <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-800">需回复</span> : null}
+              {done ? <span className="rounded bg-emerald-100 px-1 text-[10px] text-emerald-700">已处理</span> : null}
+              <span className="font-medium">{i.from}</span>
+              <Link href={`/mail/${i.accountId}/${i.folderId}?m=${i.messageId}`} className="truncate text-muted-foreground hover:underline">
+                {i.subject ?? "(无主题)"}
+              </Link>
+            </div>
+            {i.summary ? <div className="text-xs text-muted-foreground">{i.summary}</div> : null}
+
+            {generated ? (
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">处理意见：</span>
+                <select className="h-7 rounded-md border border-input bg-background px-1.5 text-xs" value={d?.action ?? "none"} disabled={pending || done} onChange={(e) => changeAction(i.messageId, e.target.value as DigestActionType)}>
+                  {DISPOSITION_ORDER.map((a) => (
+                    <option key={a} value={a}>
+                      {DISPOSITION_LABELS[a]}
+                    </option>
+                  ))}
+                </select>
+                {d?.reason ? <span className="text-xs text-muted-foreground">— {d.reason}</span> : null}
+                {showReply && (!reply || reply.id !== i.messageId) ? (
+                  <Button size="xs" variant="outline" onClick={() => setReply({ id: i.messageId, points: d?.replyPoints ?? "", draft: "" })}>
+                    <Reply className="size-3" /> 写回复
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+
+            {reply && reply.id === i.messageId ? (
+              <div className="mt-2 space-y-2 rounded-md border bg-muted/30 p-2">
+                <div className="text-xs text-muted-foreground">给出你的主要意见，AI 据此生成回复邮件：</div>
+                <Textarea value={reply.points} onChange={(e) => setReply((s) => (s ? { ...s, points: e.target.value } : s))} placeholder="例如：同意，周三下午 3 点可以；请对方带上合同草稿" className="min-h-12 text-sm" />
+                <div className="flex flex-wrap gap-2">
+                  <Button size="xs" onClick={() => generateReply(i.messageId)} disabled={replyPending}>
+                    {replyPending ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />} 生成回复
+                  </Button>
+                  <Button size="xs" variant="ghost" onClick={() => setReply(null)} disabled={replyPending}>
+                    取消
+                  </Button>
+                </div>
+                {reply.draft ? (
+                  <>
+                    <Textarea value={reply.draft} onChange={(e) => setReply((s) => (s ? { ...s, draft: e.target.value } : s))} className="min-h-28 text-sm" />
+                    <div className="flex justify-end">
+                      <Button size="xs" onClick={() => sendReply(i.messageId)} disabled={replyPending}>
+                        {replyPending ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />} 发送
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const grouped = useMemo(() => {
+    const g: Record<Bucket, DigestItem[]> = { action: [], read: [], junk: [] };
+    for (const i of items) g[bucketOf(i, planById.get(i.messageId))].push(i);
+    return g;
+  }, [items, planById]);
+
   return (
     <div className="space-y-4">
       {/* 时间段选择 */}
@@ -264,7 +364,7 @@ export function DigestView(props: {
               <span className="font-medium">{label}</span>
             )}
           </div>
-          <Button size="sm" variant="outline" onClick={generate} disabled={pending || items.length === 0}>
+          <Button size="sm" variant="outline" onClick={generate} disabled={pending}>
             {pending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} {generated ? "重新生成" : "生成摘要与处理意见"}
           </Button>
         </div>
@@ -283,9 +383,7 @@ export function DigestView(props: {
           {content ? (
             renderMarkdown(content)
           ) : (
-            <p className="text-muted-foreground">
-              {items.length === 0 ? "这个时间段还没有经过 AI 分析的邮件。给账号打开「AI 处理」或在 AI 设置里回填后再来看。" : "点右上角「生成摘要与处理意见」，AI 会汇总并给出每封邮件的处理建议。"}
-            </p>
+            <p className="text-muted-foreground">点右上角「生成摘要与处理意见」，AI 会即时分析这段时间的收件箱邮件，并给出摘要和每封的处理建议（需先在「AI 设置」配好可用的模型）。</p>
           )}
         </CardContent>
       </Card>
@@ -332,95 +430,21 @@ export function DigestView(props: {
             </div>
           ) : null}
         </CardHeader>
-        <CardContent className="divide-y p-0 text-sm">
-          {items.map((i) => {
-            const d = planById.get(i.messageId);
-            const done = d?.status === "done";
-            const canSelect = d && isAuto(d.action) && !done;
-            return (
-              <div key={i.messageId} className={cn("space-y-1.5 px-4 py-3", done && "opacity-60")}>
-                <div className="flex items-start gap-2">
-                  {generated ? (
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      disabled={!canSelect}
-                      checked={selected.has(i.messageId)}
-                      onChange={(e) => toggleSelect(i.messageId, e.target.checked)}
-                    />
-                  ) : null}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={cn("rounded px-1 text-[10px]", i.priority === "high" ? "bg-red-100 text-red-700" : "bg-muted text-muted-foreground")}>{i.categoryLabel}</span>
-                      {i.needsReply ? <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-800">需回复</span> : null}
-                      {done ? <span className="rounded bg-emerald-100 px-1 text-[10px] text-emerald-700">已处理</span> : null}
-                      <span className="font-medium">{i.from}</span>
-                      <Link href={`/mail/${i.accountId}/${i.folderId}?m=${i.messageId}`} className="truncate text-muted-foreground hover:underline">
-                        {i.subject ?? "(无主题)"}
-                      </Link>
-                    </div>
-                    {i.summary ? <div className="text-xs text-muted-foreground">{i.summary}</div> : null}
-
-                    {generated ? (
-                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                        <span className="text-xs text-muted-foreground">处理意见：</span>
-                        <select
-                          className="h-7 rounded-md border border-input bg-background px-1.5 text-xs"
-                          value={d?.action ?? "none"}
-                          disabled={pending || done}
-                          onChange={(e) => changeAction(i.messageId, e.target.value as DigestActionType)}
-                        >
-                          {DISPOSITION_ORDER.map((a) => (
-                            <option key={a} value={a}>
-                              {DISPOSITION_LABELS[a]}
-                            </option>
-                          ))}
-                        </select>
-                        {d?.reason ? <span className="text-xs text-muted-foreground">— {d.reason}</span> : null}
-                        {d?.action === "reply" && (!reply || reply.id !== i.messageId) ? (
-                          <Button size="xs" variant="outline" onClick={() => setReply({ id: i.messageId, points: d.replyPoints ?? "", draft: "" })}>
-                            写回复
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    {/* 回复编辑器 */}
-                    {reply && reply.id === i.messageId ? (
-                      <div className="mt-2 space-y-2 rounded-md border bg-muted/30 p-2">
-                        <div className="text-xs text-muted-foreground">给出你的主要意见，AI 据此生成回复邮件：</div>
-                        <Textarea
-                          value={reply.points}
-                          onChange={(e) => setReply((s) => (s ? { ...s, points: e.target.value } : s))}
-                          placeholder="例如：同意，周三下午 3 点可以；请对方带上合同草稿"
-                          className="min-h-12 text-sm"
-                        />
-                        <div className="flex flex-wrap gap-2">
-                          <Button size="xs" onClick={() => generateReply(i.messageId)} disabled={replyPending}>
-                            {replyPending ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />} 生成回复
-                          </Button>
-                          <Button size="xs" variant="ghost" onClick={() => setReply(null)} disabled={replyPending}>
-                            取消
-                          </Button>
-                        </div>
-                        {reply.draft ? (
-                          <>
-                            <Textarea value={reply.draft} onChange={(e) => setReply((s) => (s ? { ...s, draft: e.target.value } : s))} className="min-h-28 text-sm" />
-                            <div className="flex justify-end">
-                              <Button size="xs" onClick={() => sendReply(i.messageId)} disabled={replyPending}>
-                                {replyPending ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />} 发送
-                              </Button>
-                            </div>
-                          </>
-                        ) : null}
-                      </div>
-                    ) : null}
+        <CardContent className="p-0 text-sm">
+          {items.length === 0 ? (
+            <p className="px-4 py-3 text-muted-foreground">无</p>
+          ) : (
+            SECTIONS.map((s) =>
+              grouped[s.key].length ? (
+                <div key={s.key}>
+                  <div className="border-y bg-muted/40 px-4 py-1.5 text-xs font-semibold">
+                    {s.label}（{grouped[s.key].length}）
                   </div>
+                  <div className="divide-y">{grouped[s.key].map(renderItem)}</div>
                 </div>
-              </div>
-            );
-          })}
-          {items.length === 0 ? <p className="px-4 py-3 text-muted-foreground">无</p> : null}
+              ) : null,
+            )
+          )}
         </CardContent>
       </Card>
     </div>

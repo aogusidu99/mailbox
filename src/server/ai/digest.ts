@@ -1,6 +1,6 @@
-import { and, desc, eq, gte, inArray, lt, ne } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, ne } from "drizzle-orm";
 import { getDb } from "@/db";
-import { aiAnnotations, digestReports, mailAccounts, messages, type DigestDisposition } from "@/db/schema";
+import { aiAnnotations, digestReports, folders, mailAccounts, messages, type DigestDisposition } from "@/db/schema";
 import { deleteMessages, markMessages, moveMessages, setGmailLabels } from "@/server/mail/ops";
 import { runRole } from "./client";
 import {
@@ -238,15 +238,42 @@ async function upsert(userId: string, range: ResolvedRange, content: string | nu
     });
 }
 
+/** 按需分析：把时间段内收件箱中「还没分析过」的邮件即时跑一遍 triage（最多 cap 封），供页面「生成」时用。 */
+async function analyzeRangeInbox(userId: string, fromTs: Date, toTs: Date, cap = 40): Promise<number> {
+  const db = await getDb();
+  const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
+  if (accounts.length === 0) return 0;
+  const inboxes = await db.query.folders.findMany({ where: and(inArray(folders.accountId, accounts.map((a) => a.id)), eq(folders.role, "inbox")) });
+  if (inboxes.length === 0) return 0;
+  const rows = await db
+    .select({ id: messages.id, accountId: messages.accountId })
+    .from(messages)
+    .leftJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
+    .where(and(inArray(messages.folderId, inboxes.map((f) => f.id)), gte(messages.date, fromTs), lt(messages.date, toTs), isNull(aiAnnotations.id)))
+    .orderBy(desc(messages.date))
+    .limit(cap);
+  const { triageMessage } = await import("./triage");
+  let n = 0;
+  for (const r of rows) {
+    // force：无视账号「AI 处理」开关和范围限制，直接分析（错误会向上抛出，便于提示未配置 Key 等）
+    await triageMessage(r.accountId, r.id, { force: true });
+    n += 1;
+  }
+  return n;
+}
+
 export interface GenerateDigestOptions extends RangeOptions {
   refresh?: boolean;
   /** 是否生成「处理意见」（页面 true；旧版 dailyDigest 只要概览时 false） */
   withPlan?: boolean;
+  /** 生成前先即时分析该时间段内未分析的收件箱邮件（页面「生成」按钮用） */
+  analyze?: boolean;
 }
 
 export async function generateDigest(userId: string, kind: DigestKind, opts: GenerateDigestOptions = {}): Promise<DigestResult> {
   const db = await getDb();
   const range = await resolveRange(userId, kind, opts);
+  if (opts.analyze) await analyzeRangeInbox(userId, range.fromTs, range.toTs);
   const items = await digestItemsInRange(userId, range.fromTs, range.toTs);
 
   const cached = await db.query.digestReports.findFirst({ where: and(eq(digestReports.userId, userId), eq(digestReports.periodKey, range.periodKey)) });
