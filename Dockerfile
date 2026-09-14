@@ -11,6 +11,8 @@ RUN bun run build
 # ---- 运行阶段 ----
 FROM node:24-bookworm-slim AS runner
 WORKDIR /app
+# tzdata：让 TZ 环境变量（如 Asia/Shanghai）能被 Node 正确解析，否则时区回退到 UTC
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
 # standalone 输出 + 静态资源 + 运行时需要从磁盘读取的迁移文件
 COPY --from=builder /app/.next/standalone ./

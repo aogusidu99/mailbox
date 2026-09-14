@@ -27,6 +27,8 @@ services:
     environment:
       DATABASE_URL: postgres://mailbox:${POSTGRES_PASSWORD:-mailbox}@db:5432/mailbox
       WORKER_ENABLED: "true"
+      # 容器时区：让「每日定时摘要」的小时、以及当天/本周等日期边界按北京时间。改地区改这个即可。
+      TZ: ${TZ:-Asia/Shanghai}
     ports:
       - "3000:3000"
     volumes:
