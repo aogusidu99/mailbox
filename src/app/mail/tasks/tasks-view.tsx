@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { TaskList, TaskWithList } from "@/server/google/tasks";
@@ -57,6 +57,15 @@ export function TasksView({
   const [showDone, setShowDone] = useState<Set<string>>(new Set());
   const toggleDone = (listId: string) =>
     setShowDone((s) => {
+      const next = new Set(s);
+      if (next.has(listId)) next.delete(listId);
+      else next.add(listId);
+      return next;
+    });
+  // 整个清单折叠（点标题）
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggleCollapsed = (listId: string) =>
+    setCollapsed((s) => {
       const next = new Set(s);
       if (next.has(listId)) next.delete(listId);
       else next.add(listId);
@@ -254,7 +263,8 @@ export function TasksView({
           const b = byList.get(l.id) ?? { active: [], done: [] };
           return (
             <Card key={l.id}>
-              <CardHeader className="py-3">
+              <button type="button" onClick={() => toggleCollapsed(l.id)} className="flex w-full items-center gap-1 px-4 py-3 text-left hover:bg-muted/40" aria-expanded={!collapsed.has(l.id)}>
+                {collapsed.has(l.id) ? <ChevronRight className="size-4 shrink-0" /> : <ChevronDown className="size-4 shrink-0" />}
                 <CardTitle className="text-base">
                   {l.title}
                   <span className="ml-2 text-xs font-normal text-muted-foreground">
@@ -262,8 +272,8 @@ export function TasksView({
                     {b.done.length ? ` · 已完成 ${b.done.length}` : ""}
                   </span>
                 </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0 text-sm">
+              </button>
+              <CardContent className={cn("p-0 text-sm", collapsed.has(l.id) && "hidden")}>
                 {b.active.length === 0 && b.done.length === 0 ? (
                   <p className="px-4 py-3 text-muted-foreground">暂无任务。</p>
                 ) : (

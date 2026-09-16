@@ -104,10 +104,10 @@ function toGoogleBody(input: CalEventInput): Record<string, unknown> {
   return body;
 }
 
-/** 用户的日历列表（只保留已勾选显示的） */
+/** 用户的**全部**日历（不按 Google 端的勾选过滤——显示/隐藏在应用内自己控制） */
 async function listVisibleCalendars(userId: string): Promise<CalendarListEntry[]> {
   const data = await googleFetch<{ items?: CalendarListEntry[] }>(userId, `${BASE}/users/me/calendarList?minAccessRole=freeBusyReader`);
-  return (data.items ?? []).filter((c) => c.selected !== false);
+  return data.items ?? [];
 }
 
 /** 日历元信息（给前端左侧「日历显示」勾选用） */

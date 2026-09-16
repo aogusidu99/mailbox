@@ -28,6 +28,9 @@ interface Draft {
 
 type ViewMode = "month" | "week" | "agenda";
 
+/** 合成的「任务」日历：把带截止日的 Google 任务叠加显示在日历上（Google 日历的 Tasks 图层等价物） */
+const TASK_CAL: CalendarMeta = { id: "__tasks__", name: "任务", color: "#0b8043", primary: false, readOnly: true };
+
 // ---------- 日期辅助 ----------
 const WK = ["一", "二", "三", "四", "五", "六", "日"];
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -226,7 +229,7 @@ export function CalendarWorkspace({
       if (!draft.title.trim()) return void toast.error("请填写标题");
       if (!draft.start) return void toast.error("请填写开始时间");
       const input = draftToInput(draft);
-      const r = draft.id ? await updateEventAction(draft.calendarId, draft.id, input) : await createEventAction(input);
+      const r = draft.id ? await updateEventAction(draft.calendarId, draft.id, input) : await createEventAction(input, draft.calendarId);
       if (!r.ok) return void toast.error(r.error);
       toast.success(draft.id ? "已更新日程" : "已新建日程");
       setDraft(null);
@@ -270,11 +273,31 @@ export function CalendarWorkspace({
       await refreshCurrent();
     });
 
-  // 按日历勾选 + 搜索过滤
+  // 带截止日的任务 → 合成的「任务」日历事件（全天，只读），叠加到日历
+  const taskEvents = useMemo<CalEvent[]>(() => {
+    return tasks.initialTasks
+      .filter((t) => t.due)
+      .map((t) => ({
+        id: `task:${t.listId}:${t.id}`,
+        title: t.completed ? `✓ ${t.title}` : t.title,
+        description: t.notes ?? null,
+        location: null,
+        start: t.due!.slice(0, 10),
+        end: null,
+        allDay: true,
+        htmlLink: null,
+        calendarId: TASK_CAL.id,
+        calendarName: TASK_CAL.name,
+        color: TASK_CAL.color,
+        readOnly: true,
+      }));
+  }, [tasks.initialTasks]);
+
+  // 按日历勾选 + 搜索过滤（真实事件 + 任务图层）
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return events.filter((e) => !hiddenCals.has(e.calendarId) && (!q || `${e.title} ${e.location ?? ""} ${e.description ?? ""}`.toLowerCase().includes(q)));
-  }, [events, hiddenCals, query]);
+    return [...events, ...taskEvents].filter((e) => !hiddenCals.has(e.calendarId) && (!q || `${e.title} ${e.location ?? ""} ${e.description ?? ""}`.toLowerCase().includes(q)));
+  }, [events, taskEvents, hiddenCals, query]);
   const byDay = useMemo(() => {
     const m = new Map<string, CalEvent[]>();
     for (const e of visible) {
@@ -285,6 +308,8 @@ export function CalendarWorkspace({
     return m;
   }, [visible]);
   const todayKey = localKey(new Date());
+  // 日程视图：从左侧小日历选中的日期开始往后显示
+  const agendaDays = useMemo(() => [...byDay.keys()].filter((k) => k >= localKey(cursor)).sort(), [byDay, cursor]);
 
   const rangeTitle =
     view === "agenda"
@@ -322,7 +347,7 @@ export function CalendarWorkspace({
         <div>
           <div className="mb-1 text-xs font-semibold text-muted-foreground">显示的日历</div>
           <div className="space-y-1">
-            {calendars.map((c) => (
+            {[...calendars, TASK_CAL].map((c) => (
               <label key={c.id} className="flex cursor-pointer items-center gap-2 text-xs">
                 <input type="checkbox" checked={!hiddenCals.has(c.id)} onChange={() => toggleCal(c.id)} style={{ accentColor: c.color ?? undefined }} />
                 <span className="size-2 shrink-0 rounded-full" style={{ background: c.color ?? "#888" }} />
@@ -393,9 +418,23 @@ export function CalendarWorkspace({
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 <Input placeholder="标题" value={draft.title} onChange={(e) => setDraft((d) => (d ? { ...d, title: e.target.value } : d))} />
-                <label className="flex items-center gap-2 text-xs">
-                  <input type="checkbox" checked={draft.allDay} onChange={(e) => setDraft((d) => (d ? { ...d, allDay: e.target.checked } : d))} /> 全天
-                </label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-2 text-xs">
+                    <input type="checkbox" checked={draft.allDay} onChange={(e) => setDraft((d) => (d ? { ...d, allDay: e.target.checked } : d))} /> 全天
+                  </label>
+                  {draft.id === null && calendars.some((c) => !c.readOnly) ? (
+                    <label className="flex items-center gap-1.5 text-xs">
+                      <span className="text-muted-foreground">日历</span>
+                      <select value={draft.calendarId} onChange={(e) => setDraft((d) => (d ? { ...d, calendarId: e.target.value } : d))} className="h-8 rounded-md border border-input bg-background px-2">
+                        {calendars.filter((c) => !c.readOnly).map((c) => (
+                          <option key={c.id} value={c.primary ? "primary" : c.id}>
+                            {c.primary ? "我的日历" : c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                </div>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <label className="space-y-1">
                     <span className="text-xs text-muted-foreground">开始</span>
@@ -506,10 +545,10 @@ export function CalendarWorkspace({
           ) : (
             <Card>
               <CardContent className="p-0 text-sm">
-                {[...byDay.keys()].sort().length === 0 ? (
+                {agendaDays.length === 0 ? (
                   <p className="px-4 py-3 text-muted-foreground">这段时间没有日程。</p>
                 ) : (
-                  [...byDay.keys()].sort().map((key) => (
+                  agendaDays.map((key) => (
                     <div key={key}>
                       <div className="border-y bg-muted/40 px-4 py-1.5 text-xs font-semibold">{dayLabel(key)}</div>
                       <div className="divide-y">
@@ -546,7 +585,7 @@ export function CalendarWorkspace({
       </div>
 
       {/* 右：任务 */}
-      <aside className="hidden w-80 shrink-0 overflow-y-auto border-l p-3 lg:block">
+      <aside className="hidden w-[34rem] shrink-0 overflow-y-auto border-l p-3 lg:block">
         <TasksView compact lists={tasks.lists} defaultListId={tasks.defaultListId} initialTasks={tasks.initialTasks} email={email} initialError={null} />
       </aside>
     </div>

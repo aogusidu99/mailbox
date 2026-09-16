@@ -24,12 +24,12 @@ export async function refreshEventsAction(range?: { from: string; to: string }) 
   });
 }
 
-export async function createEventAction(input: CalEventInput) {
+export async function createEventAction(input: CalEventInput, calendarId?: string) {
   return run(async () => {
     const user = await requireUser();
     if (!input.title.trim()) throw new Error("请填写标题");
     if (!input.start) throw new Error("请填写开始时间");
-    return createEvent(user.id, input);
+    return createEvent(user.id, input, calendarId || "primary");
   });
 }
 
