@@ -14,7 +14,9 @@ export function Providers({ locale, children }: { locale: Locale; children: Reac
     () =>
       new QueryClient({
         defaultOptions: {
-          queries: { staleTime: 10_000, refetchOnWindowFocus: false, retry: 1 },
+          // staleTime：30s 内视为新鲜，切回不重新请求；gcTime：5min 内保留缓存，
+          // 会话内来回切换（邮件列表、正文等用 useQuery 的数据）秒开。
+          queries: { staleTime: 30_000, gcTime: 300_000, refetchOnWindowFocus: false, retry: 1 },
         },
       }),
   );
