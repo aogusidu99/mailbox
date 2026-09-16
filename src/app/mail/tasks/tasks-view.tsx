@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Pencil, Plus, RefreshCw, Trash2, Unlink } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Pencil, Plus, RefreshCw, Trash2, Unlink } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -50,6 +50,15 @@ export function TasksView({
   const [newDue, setNewDue] = useState("");
   const [addListId, setAddListId] = useState(defaultListId ?? lists[0]?.id ?? "");
   const [edit, setEdit] = useState<EditDraft | null>(null);
+  // 每个清单的「已完成」默认折叠，避免长长的已完成列表把其它清单顶到很下面
+  const [showDone, setShowDone] = useState<Set<string>>(new Set());
+  const toggleDone = (listId: string) =>
+    setShowDone((s) => {
+      const next = new Set(s);
+      if (next.has(listId)) next.delete(listId);
+      else next.add(listId);
+      return next;
+    });
 
   const reload = () =>
     start(async () => {
@@ -251,8 +260,15 @@ export function TasksView({
                     <div className="divide-y">{b.active.map(renderTask)}</div>
                     {b.done.length ? (
                       <>
-                        <div className="border-y bg-muted/40 px-4 py-1.5 text-xs font-semibold">已完成</div>
-                        <div className="divide-y opacity-70">{b.done.map(renderTask)}</div>
+                        <button
+                          type="button"
+                          onClick={() => toggleDone(l.id)}
+                          className="flex w-full items-center gap-1 border-y bg-muted/40 px-4 py-1.5 text-left text-xs font-semibold hover:bg-muted/60"
+                        >
+                          {showDone.has(l.id) ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+                          已完成 {b.done.length}
+                        </button>
+                        {showDone.has(l.id) ? <div className="divide-y opacity-70">{b.done.map(renderTask)}</div> : null}
                       </>
                     ) : null}
                   </>
