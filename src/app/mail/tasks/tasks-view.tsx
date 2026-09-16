@@ -34,12 +34,15 @@ export function TasksView({
   initialTasks,
   email,
   initialError,
+  compact = false,
 }: {
   lists: TaskList[];
   defaultListId: string | null;
   initialTasks: TaskWithList[];
   email: string | null;
   initialError: string | null;
+  /** 紧凑模式：嵌入日历右侧面板时用，精简头部（不显示已连接/断开） */
+  compact?: boolean;
 }) {
   const router = useRouter();
   const [tasks, setTasks] = useState<TaskWithList[]>(initialTasks);
@@ -182,17 +185,25 @@ export function TasksView({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-sm text-muted-foreground">
-          已连接 <span className="font-medium text-foreground">{email ?? "Google"}</span>
-          <span className="ml-2 text-xs">（{lists.length} 个清单 · 待办 {totalActive}）</span>
-        </div>
+        {compact ? (
+          <div className="text-sm font-semibold">
+            任务 <span className="ml-1 text-xs font-normal text-muted-foreground">待办 {totalActive}</span>
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground">
+            已连接 <span className="font-medium text-foreground">{email ?? "Google"}</span>
+            <span className="ml-2 text-xs">（{lists.length} 个清单 · 待办 {totalActive}）</span>
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="outline" onClick={reload} disabled={pending}>
             {pending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} 刷新
           </Button>
-          <Button size="sm" variant="ghost" onClick={disconnect} disabled={pending}>
-            <Unlink className="size-4" /> 断开
-          </Button>
+          {compact ? null : (
+            <Button size="sm" variant="ghost" onClick={disconnect} disabled={pending}>
+              <Unlink className="size-4" /> 断开
+            </Button>
+          )}
         </div>
       </div>
 

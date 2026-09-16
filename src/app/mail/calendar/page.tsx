@@ -3,10 +3,11 @@ import { headers } from "next/headers";
 import { getEnv } from "@/env";
 import { GoogleConnectPrompt } from "@/components/mail/google-connect";
 import { requireUserPage } from "@/server/auth/session";
-import { listEvents, type CalEvent } from "@/server/google/calendar";
+import { listCalendars, listEvents, type CalEvent, type CalendarMeta } from "@/server/google/calendar";
 import { getGoogleStatus, googleRedirectUri } from "@/server/google/connection";
+import { getDefaultTaskListId, listAllTasks, type TaskList, type TaskWithList } from "@/server/google/tasks";
 import { listOAuthClients } from "@/server/oauth/clients";
-import { CalendarView } from "./calendar-view";
+import { CalendarWorkspace } from "./calendar-workspace";
 
 export const metadata: Metadata = { title: "日历 · Mailbox" };
 
@@ -21,31 +22,47 @@ export default async function CalendarPage(props: PageProps<"/mail/calendar">) {
 
   const [status, clients] = await Promise.all([getGoogleStatus(user.id), listOAuthClients(user.id)]);
   const hasClient = clients.some((c) => c.provider === "google");
+  // 日历页整合了任务面板，需要日历 + 任务两个权限
+  const ready = status.connected && status.hasCalendar && status.hasTasks;
 
-  return (
-    <main className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-6">
-      <div>
-        <h1 className="text-xl font-semibold">日历</h1>
-        <p className="text-sm text-muted-foreground">直接查看 / 编辑 Google 日历事件（会议、约会等带时间的日程），改动实时双向同步；也可让 AI 从邮件提取日程加入。（待办请到「谷歌任务」页管理。）</p>
-      </div>
+  if (!ready) {
+    return (
+      <main className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-6">
+        <div>
+          <h1 className="text-xl font-semibold">日历</h1>
+          <p className="text-sm text-muted-foreground">日历事件 + Google 任务整合在一个页面（仿 Google 日历）。需要连接 Google 并授予日历、任务权限。</p>
+        </div>
+        <GoogleConnectPrompt status={status} need={status.connected && !status.hasTasks ? "tasks" : "calendar"} redirectUri={googleRedirectUri(base)} hasClient={hasClient} error={error} />
+      </main>
+    );
+  }
 
-      {!status.connected || !status.hasCalendar ? (
-        <GoogleConnectPrompt status={status} need="calendar" redirectUri={googleRedirectUri(base)} hasClient={hasClient} error={error} />
-      ) : (
-        <CalendarLoader userId={user.id} email={status.email} error={error} />
-      )}
-    </main>
-  );
-}
-
-/** 拉取初始事件后渲染视图 */
-async function CalendarLoader({ userId, email, error }: { userId: string; email: string | null; error: string | null }) {
+  // 已就绪：一次性拉取日历列表 + 事件 + 任务
+  let calendars: CalendarMeta[] = [];
   let events: CalEvent[] = [];
+  let lists: TaskList[] = [];
+  let taskItems: TaskWithList[] = [];
+  let defaultListId = "@default";
   let loadError: string | null = error;
   try {
-    events = await listEvents(userId);
+    const [cals, ev, all, defaultId] = await Promise.all([
+      listCalendars(user.id).catch(() => []),
+      listEvents(user.id).catch(() => []),
+      listAllTasks(user.id),
+      getDefaultTaskListId(user.id),
+    ]);
+    calendars = cals;
+    events = ev;
+    lists = all.lists;
+    taskItems = all.tasks;
+    defaultListId = defaultId ?? all.lists[0]?.id ?? "@default";
   } catch (err) {
     loadError = err instanceof Error ? err.message : String(err);
   }
-  return <CalendarView initialEvents={events} email={email} initialError={loadError} />;
+
+  return (
+    <div className="h-full">
+      <CalendarWorkspace initialEvents={events} calendars={calendars} email={status.email} initialError={loadError} tasks={{ lists, defaultListId, initialTasks: taskItems }} />
+    </div>
+  );
 }

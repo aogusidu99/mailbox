@@ -110,6 +110,27 @@ async function listVisibleCalendars(userId: string): Promise<CalendarListEntry[]
   return (data.items ?? []).filter((c) => c.selected !== false);
 }
 
+/** 日历元信息（给前端左侧「日历显示」勾选用） */
+export interface CalendarMeta {
+  id: string;
+  name: string;
+  color: string | null;
+  primary: boolean;
+  readOnly: boolean;
+}
+
+/** 列出用户所有已勾选的日历（含颜色、是否只读），供前端显示/隐藏切换 */
+export async function listCalendars(userId: string): Promise<CalendarMeta[]> {
+  const cals = await listVisibleCalendars(userId);
+  return cals.map((c) => ({
+    id: c.id,
+    name: c.summary ?? "(未命名)",
+    color: c.backgroundColor ?? null,
+    primary: Boolean(c.primary),
+    readOnly: c.accessRole === "reader" || c.accessRole === "freeBusyReader",
+  }));
+}
+
 /**
  * 列出某时间窗内所有已勾选日历的事件（默认过去 7 天到未来 60 天），按开始时间排序。
  * 单个日历拉取失败（如权限问题）时跳过，不影响其它日历。
