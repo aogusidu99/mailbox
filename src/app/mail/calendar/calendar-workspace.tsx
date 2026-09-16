@@ -338,8 +338,8 @@ export function CalendarWorkspace({
 
   return (
     <div className="flex h-full min-h-0">
-      {/* 左：控制栏 */}
-      <aside className="hidden w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r p-3 md:flex">
+      {/* 左：控制栏（宽屏 xl+ 才显示；更窄时新建/视图在中间工具栏） */}
+      <aside className="hidden w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r p-3 xl:flex">
         <Button size="sm" onClick={() => setDraft(emptyDraft())} disabled={pending}>
           <CalendarPlus className="size-4" /> 新建日程
         </Button>
@@ -370,8 +370,11 @@ export function CalendarWorkspace({
       <div className="flex min-w-0 flex-1 flex-col">
         {/* 工具栏 */}
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
-          <Button size="sm" onClick={() => setDraft(emptyDraft())} disabled={pending} className="md:hidden">
+          <Button size="sm" onClick={() => setDraft(emptyDraft())} disabled={pending} className="xl:hidden">
             <CalendarPlus className="size-4" /> 新建
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setShowAi((v) => !v)} className="xl:hidden" aria-label="AI 提取日程">
+            <Sparkles className="size-4" />
           </Button>
           <Button size="sm" variant="outline" onClick={() => setCursor(new Date())}>今天</Button>
           <div className="flex items-center gap-0.5">
@@ -386,11 +389,11 @@ export function CalendarWorkspace({
           <div className="ml-auto flex items-center gap-2">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索日程" className="h-8 w-40 pl-7" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索" className="h-8 w-24 pl-7 sm:w-40" />
             </div>
-            <div className="inline-flex overflow-hidden rounded-md border text-sm">
+            <div className="inline-flex shrink-0 overflow-hidden rounded-md border text-sm">
               {(["month", "week", "agenda"] as ViewMode[]).map((v) => (
-                <button key={v} type="button" onClick={() => setView(v)} className={cn("px-2.5 py-1.5", view === v ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>
+                <button key={v} type="button" onClick={() => setView(v)} className={cn("whitespace-nowrap px-2.5 py-1.5", view === v ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>
                   {v === "month" ? "月" : v === "week" ? "周" : "日程"}
                 </button>
               ))}
@@ -584,8 +587,8 @@ export function CalendarWorkspace({
         </div>
       </div>
 
-      {/* 右：任务 */}
-      <aside className="hidden w-[34rem] shrink-0 overflow-y-auto border-l p-3 lg:block">
+      {/* 右：任务（lg+ 显示，宽度随屏增长；更窄时用侧栏「谷歌任务」标签页） */}
+      <aside className="hidden w-72 shrink-0 overflow-y-auto border-l p-3 lg:block xl:w-96 2xl:w-[28rem]">
         <TasksView compact lists={tasks.lists} defaultListId={tasks.defaultListId} initialTasks={tasks.initialTasks} email={email} initialError={null} />
       </aside>
     </div>
