@@ -26,6 +26,8 @@ export type DigestKind = "day" | "week" | "month" | "since" | "custom";
 export interface DigestItem {
   messageId: string;
   accountId: string;
+  /** 所属邮箱账号的展示名（displayName 或 email），用于列表分辨来自哪个邮箱 */
+  account: string;
   folderId: string;
   subject: string | null;
   from: string;
@@ -140,6 +142,7 @@ export async function digestItemsInRange(userId: string, fromTs: Date, toTs: Dat
   const db = await getDb();
   const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
   if (accounts.length === 0) return [];
+  const accountLabel = new Map(accounts.map((a) => [a.id, a.displayName || a.email]));
   const rows = await db
     .select({ message: messages, ai: aiAnnotations })
     .from(messages)
@@ -150,6 +153,7 @@ export async function digestItemsInRange(userId: string, fromTs: Date, toTs: Dat
     .map(({ message: m, ai }) => ({
       messageId: m.id,
       accountId: m.accountId,
+      account: accountLabel.get(m.accountId) ?? "",
       folderId: m.folderId,
       subject: m.subject,
       from: m.fromAddrs[0] ? m.fromAddrs[0].name || m.fromAddrs[0].address : "",

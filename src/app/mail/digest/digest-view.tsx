@@ -278,6 +278,7 @@ export function DigestView(props: {
               <span className={cn("rounded px-1 text-[10px]", i.priority === "high" ? "bg-red-100 text-red-700" : "bg-muted text-muted-foreground")}>{i.categoryLabel}</span>
               {i.needsReply ? <span className="rounded bg-amber-100 px-1 text-[10px] text-amber-800">需回复</span> : null}
               {done ? <span className="rounded bg-emerald-100 px-1 text-[10px] text-emerald-700">已处理</span> : null}
+              {i.account ? <span className="rounded bg-sky-50 px-1 text-[10px] text-sky-700" title="所属邮箱">{i.account}</span> : null}
               <span className="font-medium">{i.from}</span>
               <Link href={`/mail/${i.accountId}/${i.folderId}?m=${i.messageId}`} className="truncate text-muted-foreground hover:underline">
                 {i.subject ?? "(无主题)"}
