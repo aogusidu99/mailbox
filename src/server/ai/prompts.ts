@@ -189,21 +189,24 @@ export const calendarEventsSchema = z.object({
       z.object({
         messageId: z.string().catch(""),
         title: z.string().catch(""),
-        // 只用日期（YYYY-MM-DD），不含时间——统一写入 Google 任务的截止日
-        date: z.string().catch(""),
+        // start / end：定时用 ISO 8601（尽量带时区，如 2026-09-20T15:00:00+08:00）；全天用 YYYY-MM-DD
+        start: z.string().catch(""),
+        end: z.string().nullish(),
+        allDay: z.boolean().catch(false),
         location: z.string().nullish(),
-        note: z.string().nullish(),
+        description: z.string().nullish(),
       }),
     )
     .catch([]),
 });
 export type CalendarEventsOutput = z.infer<typeof calendarEventsSchema>;
 
-export const CALENDAR_EXTRACT_SYSTEM = `你是用户的日程助理。从下面的邮件清单里，找出**有明确日期的真实日程/待办**并抽取出来，例如：会议、面试、预约、约见、航班/车次、酒店入住、缴费/还款截止、活动、DDL 等。抽取结果会写入 Google 任务（按日期作为截止日）。
+export const CALENDAR_EXTRACT_SYSTEM = `你是用户的日程助理。从下面的邮件清单里，找出**有明确日期/时间的真实日程**并抽取成日历事件，例如：会议、面试、预约、约见、航班/车次、酒店入住、活动开始时间等。抽取结果会写入 Google 日历。
 
 规则：
-- 只抽取能**确定到某一天**的事项；模糊的（"最近""有空时""尽快"）一律忽略。
-- **只输出日期**：date 用 YYYY-MM-DD。**不要输出时间**（Google 任务不保存时间）。若邮件里有具体时间，把时间点写进 note（如「15:00 开始」），date 仍填当天日期。
-- title 用简洁中文概括（如「与张总视频会议」「XX 账单还款」）；location（地点）有就填、note（时间/备注）有就填，没有留空。
-- messageId 必须用清单里给出的 id，一封邮件可产出 0 或多个事项；没有可加入的日程时返回空数组。
+- 只抽取有**具体日期**的事项；模糊的（"最近""有空时""尽快"）一律忽略。
+- 有具体时间点 → allDay=false，start/end 用 ISO 8601 并尽量带时区偏移（东八区为 +08:00）；只有日期没有时间 → allDay=true，start/end 用 YYYY-MM-DD。
+- 缺少结束时间时 end 留空（定时事件默认按 1 小时、全天按当天处理）。
+- title 用简洁中文概括（如「与张总视频会议」「XX 面试」）；location/description 有就填，没有留空。
+- messageId 必须用清单里给出的 id，一封邮件可产出 0 或多个事件；没有可加入日历的日程时返回空数组。
 - 当前时间会在用户消息里给出，用于理解"明天""下周三"等相对表述。`;

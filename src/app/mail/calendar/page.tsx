@@ -5,7 +5,6 @@ import { GoogleConnectPrompt } from "@/components/mail/google-connect";
 import { requireUserPage } from "@/server/auth/session";
 import { listEvents, type CalEvent } from "@/server/google/calendar";
 import { getGoogleStatus, googleRedirectUri } from "@/server/google/connection";
-import { getDefaultTaskListId, listAllTasks, type TaskList, type TaskWithList } from "@/server/google/tasks";
 import { listOAuthClients } from "@/server/oauth/clients";
 import { CalendarView } from "./calendar-view";
 
@@ -22,18 +21,16 @@ export default async function CalendarPage(props: PageProps<"/mail/calendar">) {
 
   const [status, clients] = await Promise.all([getGoogleStatus(user.id), listOAuthClients(user.id)]);
   const hasClient = clients.some((c) => c.provider === "google");
-  // 日历页统一以 Google 任务承载日程；需要日历 + 任务两个权限
-  const ready = status.connected && status.hasCalendar && status.hasTasks;
 
   return (
     <main className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-6">
       <div>
         <h1 className="text-xl font-semibold">日历</h1>
-        <p className="text-sm text-muted-foreground">日程统一以 Google 任务承载（按日期显示、实时双向同步）；也可让 AI 从邮件提取日程加入。真实日历（节假日等）只读显示作背景。</p>
+        <p className="text-sm text-muted-foreground">直接查看 / 编辑 Google 日历事件（会议、约会等带时间的日程），改动实时双向同步；也可让 AI 从邮件提取日程加入。（待办请到「谷歌任务」页管理。）</p>
       </div>
 
-      {!ready ? (
-        <GoogleConnectPrompt status={status} need={status.connected && !status.hasTasks ? "tasks" : "calendar"} redirectUri={googleRedirectUri(base)} hasClient={hasClient} error={error} />
+      {!status.connected || !status.hasCalendar ? (
+        <GoogleConnectPrompt status={status} need="calendar" redirectUri={googleRedirectUri(base)} hasClient={hasClient} error={error} />
       ) : (
         <CalendarLoader userId={user.id} email={status.email} error={error} />
       )}
@@ -41,21 +38,14 @@ export default async function CalendarPage(props: PageProps<"/mail/calendar">) {
   );
 }
 
-/** 拉取初始数据（任务 + 只读事件 + 清单）后渲染视图 */
+/** 拉取初始事件后渲染视图 */
 async function CalendarLoader({ userId, email, error }: { userId: string; email: string | null; error: string | null }) {
   let events: CalEvent[] = [];
-  let tasks: TaskWithList[] = [];
-  let lists: TaskList[] = [];
-  let defaultListId = "@default";
   let loadError: string | null = error;
   try {
-    const [ev, all, defaultId] = await Promise.all([listEvents(userId).catch(() => []), listAllTasks(userId), getDefaultTaskListId(userId)]);
-    events = ev;
-    tasks = all.tasks;
-    lists = all.lists;
-    defaultListId = defaultId ?? all.lists[0]?.id ?? "@default";
+    events = await listEvents(userId);
   } catch (err) {
     loadError = err instanceof Error ? err.message : String(err);
   }
-  return <CalendarView initialEvents={events} initialTasks={tasks} lists={lists} defaultListId={defaultListId} email={email} initialError={loadError} />;
+  return <CalendarView initialEvents={events} email={email} initialError={loadError} />;
 }

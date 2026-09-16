@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, Check, ChevronLeft, ChevronRight, ExternalLink, List, Loader2, Pencil, Plus, RefreshCw, Sparkles, Trash2, Unlink, X } from "lucide-react";
+import { CalendarDays, CalendarPlus, Check, ChevronLeft, ChevronRight, ExternalLink, List, Loader2, Pencil, Plus, RefreshCw, Sparkles, Trash2, Unlink, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -8,19 +8,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import type { CalEvent } from "@/server/google/calendar";
-import type { ScheduleCandidate } from "@/server/google/extract-events";
-import type { TaskList, TaskWithList } from "@/server/google/tasks";
+import type { CalEvent, CalEventInput } from "@/server/google/calendar";
+import type { EventCandidate } from "@/server/google/extract-events";
 import { cn } from "cn";
-import { createTaskAction, deleteTaskAction, updateTaskAction } from "../tasks/actions";
-import { addScheduleAction, disconnectGoogleAction, proposeScheduleAction, refreshCalendarAction } from "./actions";
+import { addEventsAction, createEventAction, deleteEventAction, disconnectGoogleAction, proposeEventsAction, refreshEventsAction, updateEventAction } from "./actions";
 
-interface TaskDraft {
+interface Draft {
   id: string | null;
-  listId: string;
+  /** 事件所属日历；新建默认主日历 primary */
+  calendarId: string;
   title: string;
-  date: string; // YYYY-MM-DD
-  notes: string;
+  allDay: boolean;
+  start: string;
+  end: string;
+  location: string;
+  description: string;
 }
 
 // ---------- 日期辅助 ----------
@@ -36,16 +38,28 @@ function localKey(d: Date): string {
 function firstOfMonth(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1);
 }
-/** 任务截止日（Google 存 UTC 午夜代表某日）→ YYYY-MM-DD */
-function taskDueKey(t: TaskWithList): string | null {
-  return t.due ? t.due.slice(0, 10) : null;
+/** ISO → datetime-local 输入值（本地时区，YYYY-MM-DDTHH:mm） */
+function toLocalInput(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
-/** 事件所在日（本地） */
 function eventDayKey(e: CalEvent): string {
   const d = new Date(e.start);
   return Number.isNaN(d.getTime()) ? e.start.slice(0, 10) : localKey(d);
 }
-function eventTime(e: CalEvent): string {
+function timeLabel(e: CalEvent): string {
+  if (e.allDay) return "全天";
+  const d = new Date(e.start);
+  if (Number.isNaN(d.getTime())) return "";
+  const t = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  if (e.end) {
+    const de = new Date(e.end);
+    if (!Number.isNaN(de.getTime())) return `${t}–${pad2(de.getHours())}:${pad2(de.getMinutes())}`;
+  }
+  return t;
+}
+function hhmm(e: CalEvent): string {
   if (e.allDay) return "";
   const d = new Date(e.start);
   return Number.isNaN(d.getTime()) ? "" : `${pad2(d.getHours())}:${pad2(d.getMinutes())} `;
@@ -72,56 +86,68 @@ function dayLabel(key: string): string {
   return `${key.slice(5)} ${MONTH_WEEKDAYS[(d.getDay() + 6) % 7]}${isToday ? "（今天）" : ""}`;
 }
 
-export function CalendarView({
-  initialEvents,
-  initialTasks,
-  lists,
-  defaultListId,
-  email,
-  initialError,
-}: {
-  initialEvents: CalEvent[];
-  initialTasks: TaskWithList[];
-  lists: TaskList[];
-  defaultListId: string;
-  email: string | null;
-  initialError: string | null;
-}) {
+function emptyDraft(): Draft {
+  const now = toLocalInput(new Date(Date.now() + 3_600_000).toISOString());
+  return { id: null, calendarId: "primary", title: "", allDay: false, start: now, end: "", location: "", description: "" };
+}
+function draftOnDay(key: string): Draft {
+  return { id: null, calendarId: "primary", title: "", allDay: false, start: `${key}T09:00`, end: "", location: "", description: "" };
+}
+function draftFromEvent(e: CalEvent): Draft {
+  return {
+    id: e.id,
+    calendarId: e.calendarId,
+    title: e.title,
+    allDay: e.allDay,
+    start: e.allDay ? e.start.slice(0, 10) : toLocalInput(e.start),
+    end: e.end ? (e.allDay ? e.end.slice(0, 10) : toLocalInput(e.end)) : "",
+    location: e.location ?? "",
+    description: e.description ?? "",
+  };
+}
+function draftToInput(d: Draft): CalEventInput {
+  if (d.allDay) {
+    return { title: d.title.trim(), allDay: true, start: d.start, end: d.end || null, location: d.location || null, description: d.description || null };
+  }
+  return {
+    title: d.title.trim(),
+    allDay: false,
+    start: new Date(d.start).toISOString(),
+    end: d.end ? new Date(d.end).toISOString() : null,
+    location: d.location || null,
+    description: d.description || null,
+  };
+}
+
+export function CalendarView({ initialEvents, email, initialError }: { initialEvents: CalEvent[]; email: string | null; initialError: string | null }) {
   const router = useRouter();
   const [events, setEvents] = useState<CalEvent[]>(initialEvents);
-  const [tasks, setTasks] = useState<TaskWithList[]>(initialTasks);
   const [pending, start] = useTransition();
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [error] = useState<string | null>(initialError);
 
   const [viewMode, setViewMode] = useState<"month" | "agenda">("month");
   const [monthCursor, setMonthCursor] = useState<Date>(() => firstOfMonth(new Date()));
-  const [draft, setDraft] = useState<TaskDraft | null>(null);
 
   // AI 提取
   const [days, setDays] = useState(14);
-  const [candidates, setCandidates] = useState<ScheduleCandidate[] | null>(null);
+  const [candidates, setCandidates] = useState<EventCandidate[] | null>(null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [aiPending, startAi] = useTransition();
 
   const refreshCurrent = async () => {
     const range = viewMode === "month" ? monthRangeIso(monthCursor) : agendaRangeIso();
-    const r = await refreshCalendarAction(range);
-    if (r.ok) {
-      setEvents(r.data.events);
-      setTasks(r.data.tasks);
-    }
+    const r = await refreshEventsAction(range);
+    if (r.ok) setEvents(r.data.events);
     return r;
   };
 
-  // 切换视图 / 月份时按范围重新拉取（事件按范围，任务全量）
   useEffect(() => {
     const range = viewMode === "month" ? monthRangeIso(monthCursor) : agendaRangeIso();
     start(async () => {
-      const r = await refreshCalendarAction(range);
-      if (r.ok) {
-        setEvents(r.data.events);
-        setTasks(r.data.tasks);
-      } else toast.error(r.error);
+      const r = await refreshEventsAction(range);
+      if (r.ok) setEvents(r.data.events);
+      else toast.error(r.error);
     });
   }, [viewMode, monthCursor]);
 
@@ -131,40 +157,25 @@ export function CalendarView({
       if (!r.ok) toast.error(r.error);
     });
 
-  const newOnDay = (key: string) => setDraft({ id: null, listId: defaultListId, title: "", date: key, notes: "" });
-  const editTask = (t: TaskWithList) => setDraft({ id: t.id, listId: t.listId, title: t.title, date: taskDueKey(t) ?? "", notes: t.notes ?? "" });
-
   const saveDraft = () =>
     start(async () => {
       if (!draft) return;
       if (!draft.title.trim()) return void toast.error("请填写标题");
-      const r = draft.id
-        ? await updateTaskAction(draft.listId, draft.id, { title: draft.title.trim(), notes: draft.notes || null, due: draft.date || null })
-        : await createTaskAction(draft.listId, { title: draft.title.trim(), due: draft.date || null, notes: draft.notes || null });
+      if (!draft.start) return void toast.error("请填写开始时间");
+      const input = draftToInput(draft);
+      const r = draft.id ? await updateEventAction(draft.calendarId, draft.id, input) : await createEventAction(input);
       if (!r.ok) return void toast.error(r.error);
-      toast.success(draft.id ? "已更新" : "已加入日历（Google 任务）");
+      toast.success(draft.id ? "已更新日程" : "已新建日程");
       setDraft(null);
       await refreshCurrent();
     });
 
-  const toggleTask = (t: TaskWithList) => {
-    const completed = !t.completed;
-    setTasks((list) => list.map((x) => (x.id === t.id && x.listId === t.listId ? { ...x, completed } : x)));
+  const remove = (e: CalEvent) =>
     start(async () => {
-      const r = await updateTaskAction(t.listId, t.id, { completed });
-      if (!r.ok) {
-        toast.error(r.error);
-        setTasks((list) => list.map((x) => (x.id === t.id && x.listId === t.listId ? { ...x, completed: !completed } : x)));
-      }
-    });
-  };
-
-  const removeTask = (t: TaskWithList) =>
-    start(async () => {
-      if (!confirm(`删除「${t.title}」？`)) return;
-      const r = await deleteTaskAction(t.listId, t.id);
+      if (!confirm(`删除日程「${e.title}」？`)) return;
+      const r = await deleteEventAction(e.calendarId, e.id);
       if (!r.ok) return void toast.error(r.error);
-      setTasks((list) => list.filter((x) => !(x.id === t.id && x.listId === t.listId)));
+      setEvents((list) => list.filter((x) => x.id !== e.id));
       toast.success("已删除");
     });
 
@@ -178,11 +189,11 @@ export function CalendarView({
 
   const propose = () =>
     startAi(async () => {
-      const r = await proposeScheduleAction(days);
+      const r = await proposeEventsAction(days);
       if (!r.ok) return void toast.error(r.error);
       setCandidates(r.data.candidates);
       setPicked(new Set(r.data.candidates.map((_, i) => i)));
-      toast.success(r.data.candidates.length ? `AI 找到 ${r.data.candidates.length} 个日程` : "近期邮件里没有找到明确的日程");
+      toast.success(r.data.candidates.length ? `AI 找到 ${r.data.candidates.length} 个候选日程` : "近期邮件里没有找到明确的日程");
     });
 
   const addPicked = () =>
@@ -190,34 +201,29 @@ export function CalendarView({
       if (!candidates) return;
       const chosen = candidates.filter((_, i) => picked.has(i));
       if (chosen.length === 0) return void toast.error("请先勾选要加入的日程");
-      const r = await addScheduleAction(chosen.map(({ title, date, location, note }) => ({ title, date, location, note })), defaultListId);
+      const r = await addEventsAction(chosen.map(({ title, start: s, end, allDay, location, description }) => ({ title, start: s, end, allDay, location, description })));
       if (!r.ok) return void toast.error(r.error);
-      toast.success(`已加入 ${r.data.created.length} 个${r.data.failed ? `，失败 ${r.data.failed}` : ""}`);
+      toast.success(`已加入 ${r.data.created.length} 个日程${r.data.failed ? `，失败 ${r.data.failed}` : ""}`);
       setCandidates(null);
       setPicked(new Set());
       await refreshCurrent();
     });
 
-  // 按日期归并任务 + 事件
   const byDay = useMemo(() => {
-    const map = new Map<string, { tasks: TaskWithList[]; events: CalEvent[] }>();
-    const put = (key: string) => {
-      if (!map.has(key)) map.set(key, { tasks: [], events: [] });
-      return map.get(key)!;
-    };
-    for (const t of tasks) {
-      const k = taskDueKey(t);
-      if (k) put(k).tasks.push(t);
+    const map = new Map<string, CalEvent[]>();
+    for (const e of events) {
+      const k = eventDayKey(e);
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(e);
     }
-    for (const e of events) put(eventDayKey(e)).events.push(e);
     return map;
-  }, [tasks, events]);
-
+  }, [events]);
   const gridDays = useMemo(() => monthGrid(monthCursor), [monthCursor]);
   const agendaDays = useMemo(() => [...byDay.keys()].sort(), [byDay]);
   const todayKey = localKey(new Date());
   const curMonth = monthCursor.getMonth();
-  const datedTaskCount = useMemo(() => tasks.filter((t) => t.due).length, [tasks]);
+
+  const openEvent = (e: CalEvent) => (e.readOnly ? e.htmlLink && window.open(e.htmlLink, "_blank") : setDraft(draftFromEvent(e)));
 
   return (
     <div className="space-y-4">
@@ -230,8 +236,8 @@ export function CalendarView({
           <Button size="sm" variant="outline" onClick={reload} disabled={pending}>
             {pending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} 刷新
           </Button>
-          <Button size="sm" onClick={() => newOnDay(todayKey)} disabled={pending}>
-            <Plus className="size-4" /> 新建
+          <Button size="sm" onClick={() => setDraft(emptyDraft())} disabled={pending}>
+            <CalendarPlus className="size-4" /> 新建日程
           </Button>
           <Button size="sm" variant="ghost" onClick={disconnect} disabled={pending}>
             <Unlink className="size-4" /> 断开
@@ -276,36 +282,42 @@ export function CalendarView({
         </div>
       ) : null}
 
-      {/* 新建 / 编辑任务 */}
+      {/* 新建 / 编辑事件 */}
       {draft ? (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">{draft.id ? "编辑日程" : "新建日程"}（Google 任务）</CardTitle>
+            <CardTitle className="text-base">{draft.id ? "编辑日程" : "新建日程"}</CardTitle>
             <Button size="xs" variant="ghost" onClick={() => setDraft(null)}>
               <X className="size-3" />
             </Button>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             <Input placeholder="标题" value={draft.title} onChange={(e) => setDraft((d) => (d ? { ...d, title: e.target.value } : d))} />
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">日期</span>
-                <input type="date" value={draft.date} onChange={(e) => setDraft((d) => (d ? { ...d, date: e.target.value } : d))} className="h-9 rounded-md border border-input bg-background px-2" />
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={draft.allDay} onChange={(e) => setDraft((d) => (d ? { ...d, allDay: e.target.checked } : d))} /> 全天
+            </label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <label className="space-y-1">
+                <span className="text-xs text-muted-foreground">开始</span>
+                <input
+                  type={draft.allDay ? "date" : "datetime-local"}
+                  value={draft.start}
+                  onChange={(e) => setDraft((d) => (d ? { ...d, start: e.target.value } : d))}
+                  className="h-9 w-full rounded-md border border-input bg-background px-2"
+                />
               </label>
-              {lists.length > 1 ? (
-                <label className="flex items-center gap-1.5">
-                  <span className="text-xs text-muted-foreground">清单</span>
-                  <select value={draft.listId} onChange={(e) => setDraft((d) => (d ? { ...d, listId: e.target.value } : d))} className="h-9 rounded-md border border-input bg-background px-2">
-                    {lists.map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
+              <label className="space-y-1">
+                <span className="text-xs text-muted-foreground">结束（可留空）</span>
+                <input
+                  type={draft.allDay ? "date" : "datetime-local"}
+                  value={draft.end}
+                  onChange={(e) => setDraft((d) => (d ? { ...d, end: e.target.value } : d))}
+                  className="h-9 w-full rounded-md border border-input bg-background px-2"
+                />
+              </label>
             </div>
-            <Textarea placeholder="备注（地点 / 时间点等）" value={draft.notes} onChange={(e) => setDraft((d) => (d ? { ...d, notes: e.target.value } : d))} className="min-h-16" />
+            <Input placeholder="地点（可留空）" value={draft.location} onChange={(e) => setDraft((d) => (d ? { ...d, location: e.target.value } : d))} />
+            <Textarea placeholder="备注（可留空）" value={draft.description} onChange={(e) => setDraft((d) => (d ? { ...d, description: e.target.value } : d))} className="min-h-16" />
             <div className="flex justify-end gap-2">
               <Button size="sm" variant="ghost" onClick={() => setDraft(null)} disabled={pending}>
                 取消
@@ -356,9 +368,8 @@ export function CalendarView({
                       <div className="min-w-0 flex-1">
                         <div className="font-medium">{c.title}</div>
                         <div className="text-xs text-muted-foreground">
-                          {c.date}
-                          {c.note ? ` · ${c.note}` : ""}
-                          {c.location ? ` · 📍${c.location}` : ""}
+                          {c.allDay ? `${c.start.slice(0, 10)} 全天` : new Date(c.start).toLocaleString()}
+                          {c.location ? ` · ${c.location}` : ""}
                         </div>
                         <div className="truncate text-xs text-muted-foreground/80">来自：{c.sourceFrom} — {c.sourceSubject ?? "(无主题)"}</div>
                       </div>
@@ -377,7 +388,7 @@ export function CalendarView({
             )}
           </CardContent>
         ) : (
-          <CardContent className="text-sm text-muted-foreground">点「提取」，AI 会分析近期邮件，找出会议、预约、截止日期等（只到日）供你确认加入 Google 任务（需先在「AI 设置」配好模型）。</CardContent>
+          <CardContent className="text-sm text-muted-foreground">点「提取」，AI 会分析近期邮件，找出会议、预约、面试等带时间的日程供你确认加入日历（需先在「AI 设置」配好模型）。</CardContent>
         )}
       </Card>
 
@@ -395,34 +406,34 @@ export function CalendarView({
             <div className="grid grid-cols-7">
               {gridDays.map((d) => {
                 const key = localKey(d);
-                const cell = byDay.get(key);
+                const dayEvents = byDay.get(key) ?? [];
                 const inMonth = d.getMonth() === curMonth;
                 const isToday = key === todayKey;
                 return (
                   <div key={key} className={cn("group/cell min-h-24 border-b border-r p-1 [&:nth-child(7n)]:border-r-0", !inMonth && "bg-muted/30")}>
                     <div className="flex items-center justify-between">
                       <span className={cn("inline-flex size-6 items-center justify-center rounded-full text-xs", isToday && "bg-primary font-semibold text-primary-foreground", !inMonth && "text-muted-foreground")}>{d.getDate()}</span>
-                      <button type="button" onClick={() => newOnDay(key)} className="inline-flex size-5 items-center justify-center rounded opacity-0 transition hover:bg-muted group-hover/cell:opacity-100" aria-label={`在 ${key} 新建`}>
+                      <button type="button" onClick={() => setDraft(draftOnDay(key))} className="inline-flex size-5 items-center justify-center rounded opacity-0 transition hover:bg-muted group-hover/cell:opacity-100" aria-label={`在 ${key} 新建日程`}>
                         <Plus className="size-3.5 text-muted-foreground" />
                       </button>
                     </div>
                     <div className="mt-0.5 space-y-0.5">
-                      {(cell?.tasks ?? []).slice(0, 3).map((t) => (
-                        <button key={`${t.listId}:${t.id}`} type="button" onClick={() => editTask(t)} title={t.title} className={cn("flex w-full items-center gap-1 truncate rounded bg-primary/10 px-1 py-0.5 text-left text-[11px] leading-tight hover:bg-primary/20", t.completed && "opacity-50 line-through")}>
-                          <span className="size-1.5 shrink-0 rounded-full bg-primary" />
-                          <span className="truncate">{t.title}</span>
-                        </button>
-                      ))}
-                      {(cell?.events ?? []).slice(0, 2).map((e) => (
-                        <button key={`${e.calendarId}:${e.id}`} type="button" onClick={() => e.htmlLink && window.open(e.htmlLink, "_blank")} title={`${e.title}${e.calendarName ? `（${e.calendarName}）` : ""}`} className="flex w-full items-center gap-1 truncate rounded bg-muted px-1 py-0.5 text-left text-[11px] leading-tight text-muted-foreground hover:bg-muted/70">
+                      {dayEvents.slice(0, 4).map((e) => (
+                        <button
+                          key={`${e.calendarId}:${e.id}`}
+                          type="button"
+                          onClick={() => openEvent(e)}
+                          title={`${timeLabel(e)} ${e.title}${e.calendarName ? `（${e.calendarName}）` : ""}`}
+                          className="flex w-full items-center gap-1 truncate rounded bg-muted px-1 py-0.5 text-left text-[11px] leading-tight hover:bg-muted/70"
+                        >
                           <span className="size-1.5 shrink-0 rounded-full" style={{ background: e.color ?? "#888" }} />
-                          <span className="truncate">{eventTime(e)}{e.title}</span>
+                          <span className="truncate">
+                            {hhmm(e) ? <span className="text-muted-foreground">{hhmm(e)}</span> : null}
+                            {e.title}
+                          </span>
                         </button>
                       ))}
-                      {(() => {
-                        const extra = (cell?.tasks.length ?? 0) - Math.min(cell?.tasks.length ?? 0, 3) + Math.max(0, (cell?.events.length ?? 0) - 2);
-                        return extra > 0 ? <div className="px-1 text-[10px] text-muted-foreground">还有 {extra} 项</div> : null;
-                      })()}
+                      {dayEvents.length > 4 ? <div className="px-1 text-[10px] text-muted-foreground">还有 {dayEvents.length - 4} 项</div> : null}
                     </div>
                   </div>
                 );
@@ -434,65 +445,55 @@ export function CalendarView({
         /* 日程视图 */
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">日程（{datedTaskCount} 个任务）</CardTitle>
+            <CardTitle className="text-base">日程（{events.length}）</CardTitle>
           </CardHeader>
           <CardContent className="p-0 text-sm">
             {agendaDays.length === 0 ? (
-              <p className="px-4 py-3 text-muted-foreground">这段时间没有带日期的任务或日程。</p>
+              <p className="px-4 py-3 text-muted-foreground">这段时间没有日程。</p>
             ) : (
-              agendaDays.map((key) => {
-                const cell = byDay.get(key)!;
-                return (
-                  <div key={key}>
-                    <div className="border-y bg-muted/40 px-4 py-1.5 text-xs font-semibold">{dayLabel(key)}</div>
-                    <div className="divide-y">
-                      {cell.tasks.map((t) => (
-                        <div key={`${t.listId}:${t.id}`} className="group flex items-start gap-3 px-4 py-2.5">
-                          <input type="checkbox" checked={t.completed} disabled={pending} onChange={() => toggleTask(t)} className="mt-1" aria-label={`完成 ${t.title}`} />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className={cn("font-medium", t.completed && "text-muted-foreground line-through")}>{t.title}</span>
-                              {lists.length > 1 ? <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">{t.listTitle}</span> : null}
-                            </div>
-                            {t.notes ? <div className="whitespace-pre-wrap text-xs text-muted-foreground">{t.notes}</div> : null}
+              agendaDays.map((key) => (
+                <div key={key}>
+                  <div className="border-y bg-muted/40 px-4 py-1.5 text-xs font-semibold">{dayLabel(key)}</div>
+                  <div className="divide-y">
+                    {(byDay.get(key) ?? []).map((e) => (
+                      <div key={`${e.calendarId}:${e.id}`} className="group flex items-start gap-3 px-4 py-2.5">
+                        <div className="w-20 shrink-0 text-xs text-muted-foreground">{timeLabel(e)}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">{e.title}</span>
+                            {e.calendarName ? (
+                              <span className="inline-flex items-center gap-1 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+                                <span className="size-2 rounded-full" style={{ background: e.color ?? "#888" }} />
+                                {e.calendarName}
+                              </span>
+                            ) : null}
+                            {e.readOnly ? <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">只读</span> : null}
                           </div>
-                          <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
-                            <button type="button" onClick={() => editTask(t)} className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" aria-label="编辑">
-                              <Pencil className="size-3.5 text-muted-foreground" />
-                            </button>
-                            <button type="button" onClick={() => removeTask(t)} className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" aria-label="删除">
-                              <Trash2 className="size-3.5 text-destructive" />
-                            </button>
-                          </div>
+                          {e.location ? <div className="text-xs text-muted-foreground">📍 {e.location}</div> : null}
+                          {e.description ? <div className="line-clamp-2 text-xs text-muted-foreground">{e.description}</div> : null}
                         </div>
-                      ))}
-                      {cell.events.map((e) => (
-                        <div key={`${e.calendarId}:${e.id}`} className="flex items-start gap-3 px-4 py-2.5">
-                          <div className="w-16 shrink-0 text-xs text-muted-foreground">{e.allDay ? "全天" : eventTime(e).trim()}</div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span>{e.title}</span>
-                              {e.calendarName ? (
-                                <span className="inline-flex items-center gap-1 rounded bg-muted px-1 text-[10px] text-muted-foreground">
-                                  <span className="size-2 rounded-full" style={{ background: e.color ?? "#888" }} />
-                                  {e.calendarName}
-                                </span>
-                              ) : null}
-                              <span className="rounded bg-muted px-1 text-[10px] text-muted-foreground">只读</span>
-                            </div>
-                            {e.location ? <div className="text-xs text-muted-foreground">📍 {e.location}</div> : null}
-                          </div>
+                        <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
                           {e.htmlLink ? (
                             <a href={e.htmlLink} target="_blank" rel="noreferrer" className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" aria-label="在 Google 打开">
                               <ExternalLink className="size-3.5 text-muted-foreground" />
                             </a>
                           ) : null}
+                          {e.readOnly ? null : (
+                            <>
+                              <button type="button" onClick={() => setDraft(draftFromEvent(e))} className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" aria-label="编辑">
+                                <Pencil className="size-3.5 text-muted-foreground" />
+                              </button>
+                              <button type="button" onClick={() => remove(e)} className="inline-flex size-7 items-center justify-center rounded-md hover:bg-muted" aria-label="删除">
+                                <Trash2 className="size-3.5 text-destructive" />
+                              </button>
+                            </>
+                          )}
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    ))}
                   </div>
-                );
-              })
+                </div>
+              ))
             )}
           </CardContent>
         </Card>
