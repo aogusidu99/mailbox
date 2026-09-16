@@ -105,14 +105,61 @@ export function sanitizeEmailHtml(html: string, opts: { allowRemoteImages?: bool
   return { html: clean, blockedRemoteImages: blocked };
 }
 
-/** 纯文本正文转 HTML：转义 + 自动链接 + 换行。 */
-export function textToHtml(text: string): string {
-  const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const linked = escaped.replace(
+/** 转义 + 自动链接（不处理换行；换行交给外层 white-space:pre-wrap） */
+function escapeAndLink(s: string): string {
+  const escaped = s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return escaped.replace(
     /(https?:\/\/[^\s<]+)/g,
     (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer nofollow">${url}</a>`,
   );
-  return `<div style="white-space:pre-wrap;font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px;line-height:1.6">${linked}</div>`;
+}
+
+/** 一行的引用层级：前导 "> " 的个数 = 层级，返回去掉引用前缀后的内容 */
+function quoteDepth(line: string): { depth: number; content: string } {
+  const m = line.match(/^((?:>\s?)+)/);
+  if (!m) return { depth: 0, content: line };
+  const depth = (m[1].match(/>/g) ?? []).length;
+  return { depth, content: line.slice(m[1].length) };
+}
+
+/**
+ * 纯文本正文转 HTML：转义 + 自动链接 + 换行。
+ * **引用感知**：把连续的 `>` 引用行转成嵌套 `<blockquote>`（Gmail 风格的阶梯竖线 + 灰色引用文字），
+ * 而不是显示字面的 `>`。同时用于发信的 HTML 正文与「纯文本邮件」的显示渲染。
+ */
+export function textToHtml(text: string): string {
+  const QUOTE_STYLE = "margin:0 0 0 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex;color:#666";
+  const lines = text.split("\n");
+  let out = "";
+  let depth = 0;
+  let buf: string[] = [];
+  const flush = () => {
+    if (buf.length) {
+      out += escapeAndLink(buf.join("\n"));
+      buf = [];
+    }
+  };
+  for (const raw of lines) {
+    const q = quoteDepth(raw);
+    if (q.depth !== depth) {
+      flush();
+      while (depth < q.depth) {
+        out += `<blockquote style="${QUOTE_STYLE}">`;
+        depth += 1;
+      }
+      while (depth > q.depth) {
+        out += "</blockquote>";
+        depth -= 1;
+      }
+    }
+    buf.push(q.content);
+  }
+  flush();
+  while (depth > 0) {
+    out += "</blockquote>";
+    depth -= 1;
+  }
+  return `<div style="white-space:pre-wrap;font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px;line-height:1.6">${out}</div>`;
 }
 
 /** 把 HTML 压成一段纯文本摘要。 */
