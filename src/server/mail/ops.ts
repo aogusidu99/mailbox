@@ -230,3 +230,61 @@ export async function enqueueRawOperation(accountId: string, op: MailOperation, 
   await createOp(db, accountId, op, affectedFolders);
   await enqueueOutboxApply(accountId);
 }
+
+// ---------- 转给助手（与 assistant 项目协同的邮件桥）----------
+
+/** assistant 项目只读消费的标签 / 文件夹名（两端约定一致；见 docs/integration-with-assistant.md） */
+export const ASSISTANT_FOLDER = "Assistant";
+
+function isGmailAccount(account: MailAccount): boolean {
+  return account.presetId === "gmail" || account.provider === "gmail";
+}
+
+/** 确保 IMAP 账号存在「Assistant」文件夹，返回其路径（本地无记录时入队创建）。 */
+async function ensureAssistantFolder(db: Db, account: MailAccount): Promise<string> {
+  const all = await db.query.folders.findMany({ where: eq(folders.accountId, account.id) });
+  const lc = ASSISTANT_FOLDER.toLowerCase();
+  const existing = all.find((f) => f.name.toLowerCase() === lc || f.path.toLowerCase() === lc || f.path.toLowerCase().endsWith(`/${lc}`));
+  if (existing) return existing.path;
+  const inbox = all.find((f) => f.role === "inbox");
+  const delimiter = inbox?.delimiter || "/";
+  // 有的服务器要求子文件夹放在 INBOX 下（与归档逻辑一致）
+  const prefix = all.some((f) => f.path.startsWith(`INBOX${delimiter}`)) && !all.some((f) => !f.path.startsWith("INBOX")) ? `INBOX${delimiter}` : "";
+  const path = `${prefix}${ASSISTANT_FOLDER}`;
+  await createOp(db, account.id, { type: "create_folder", folder: path }, []);
+  return path;
+}
+
+/**
+ * 「转给助手」：把选中邮件归入各账号的「Assistant」标签 / 文件夹，供 assistant 项目只读消费。
+ * - Gmail：加 Gmail 标签「Assistant」（assistant 用 `label:Assistant` 读取，标签不存在会自动创建）。
+ * - 其它 IMAP：COPY 到「Assistant」文件夹（保留原件；文件夹缺失则先创建）。
+ * 原邮件保持在收件箱不动。
+ */
+export async function tagForAssistant(userId: string, ids: string[]): Promise<{ tagged: number }> {
+  const db = await getDb();
+  const rows = await loadOwnedMessages(userId, ids);
+  const byAccount = new Map<string, OwnedMessage[]>();
+  for (const r of rows) {
+    if (!byAccount.has(r.account.id)) byAccount.set(r.account.id, []);
+    byAccount.get(r.account.id)!.push(r);
+  }
+  let tagged = 0;
+  for (const accountRows of byAccount.values()) {
+    const account = accountRows[0].account;
+    if (isGmailAccount(account)) {
+      for (const { folder, items } of groupByFolder(accountRows).values()) {
+        await setGmailLabels(account.id, folder.path, items.map((m) => m.uid), [ASSISTANT_FOLDER]);
+        tagged += items.length;
+      }
+    } else {
+      const target = await ensureAssistantFolder(db, account);
+      for (const { folder, items } of groupByFolder(accountRows).values()) {
+        if (folder.path === target) continue;
+        await enqueueRawOperation(account.id, { type: "copy", folder: folder.path, uids: items.map((m) => m.uid), toFolder: target }, [folder.path, target]);
+        tagged += items.length;
+      }
+    }
+  }
+  return { tagged };
+}

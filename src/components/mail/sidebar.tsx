@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
   Archive,
+  CalendarDays,
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
@@ -12,7 +13,7 @@ import {
   Folder,
   Inbox,
   Languages,
-  ListChecks,
+  ListTodo,
   Loader2,
   Mail,
   MessageSquare,
@@ -158,7 +159,8 @@ export function Sidebar({
       </div>
       <div className="grid grid-cols-2 gap-0.5 border-b px-2 py-1.5 text-xs">
         {navLink("/mail/chat", MessageSquare, t.nav.chat)}
-        {navLink("/mail/todos", ListChecks, t.nav.todos)}
+        {navLink("/mail/calendar", CalendarDays, t.nav.calendar)}
+        {navLink("/mail/tasks", ListTodo, t.nav.tasks)}
         {navLink("/mail/digest", Sparkles, t.nav.digest)}
         {navLink("/mail/settings/rules", Wand2, t.nav.rules)}
       </div>

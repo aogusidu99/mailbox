@@ -497,7 +497,14 @@ export class ImapProvider implements MailProvider {
   async applyOperation(op: MailOperation): Promise<OperationResult> {
     const client = this.requireClient();
     if (op.type === "create_folder") {
-      await client.mailboxCreate(op.folder);
+      // 幂等：文件夹已存在时视为成功（转给助手 / 归档等会重复入队 create_folder）
+      try {
+        await client.mailboxCreate(op.folder);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const code = String((err as { code?: string; serverResponseCode?: string }).code ?? (err as { serverResponseCode?: string }).serverResponseCode ?? "");
+        if (!/exist/i.test(msg) && !/ALREADYEXISTS/i.test(code)) throw err;
+      }
       return {};
     }
     if (op.type === "append") {

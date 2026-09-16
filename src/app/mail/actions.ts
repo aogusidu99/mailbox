@@ -147,11 +147,12 @@ export async function unsubscribeAction(messageId: string) {
   });
 }
 
-export async function toggleTodoAction(messageId: string, index: number, done: boolean) {
+/** 转给助手：把邮件归入各账号「Assistant」标签/文件夹，供 assistant 项目只读消费 */
+export async function tagForAssistantAction(ids: string[]) {
   return run(async () => {
     const user = await requireUser();
-    const { setTodoDone } = await import("@/server/ai/todos");
-    await setTodoDone(user.id, messageId, index, done);
+    const { tagForAssistant } = await import("@/server/mail/ops");
+    return tagForAssistant(user.id, ids);
   });
 }
 

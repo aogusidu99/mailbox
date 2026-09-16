@@ -1,9 +1,9 @@
 "use client";
 
-import { Archive, FolderInput, Forward, Inbox, Loader2, Mail, MailOpen, Pencil, Reply, ReplyAll, ShieldAlert, Sparkles, Star, Trash2, Wand2 } from "lucide-react";
+import { Archive, Bot, FolderInput, Forward, Inbox, Loader2, Mail, MailOpen, Pencil, Reply, ReplyAll, ShieldAlert, Sparkles, Star, Trash2, Wand2 } from "lucide-react";
 import { useTransition } from "react";
 import { toast } from "sonner";
-import { aiAnalyzeAction, archiveAction, flagAction, junkAction, markReadAction, moveAction, notJunkAction, trashAction } from "@/app/mail/actions";
+import { aiAnalyzeAction, archiveAction, flagAction, junkAction, markReadAction, moveAction, notJunkAction, tagForAssistantAction, trashAction } from "@/app/mail/actions";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -79,6 +79,9 @@ export function MessageToolbar({
           </IconButton>
           <IconButton label={t.aiAnalyze} disabled={pending} onClick={() => act(() => aiAnalyzeAction(message.id), "changed", t.aiAnalyzed)}>
             <Wand2 className="size-4" />
+          </IconButton>
+          <IconButton label={t.assistant} disabled={pending} onClick={() => act(() => tagForAssistantAction(ids), "changed", t.assistantDone)}>
+            <Bot className="size-4" />
           </IconButton>
         </>
       )}

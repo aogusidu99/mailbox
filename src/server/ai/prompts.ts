@@ -180,3 +180,30 @@ export const DIGEST_SYSTEM = `你是用户的邮件助理。根据当天收到�
 3. 「值得一看」：重要但不紧急的；
 4. 「可以忽略」：推广、订阅、通知类，只给数量与一两句说明。
 用 Markdown 无序列表，不要编造清单里没有的内容。`;
+
+// ---------- 从邮件抽取日程（加入谷歌日历） ----------
+
+export const calendarEventsSchema = z.object({
+  events: z
+    .array(
+      z.object({
+        messageId: z.string().catch(""),
+        title: z.string().catch(""),
+        // 只用日期（YYYY-MM-DD），不含时间——统一写入 Google 任务的截止日
+        date: z.string().catch(""),
+        location: z.string().nullish(),
+        note: z.string().nullish(),
+      }),
+    )
+    .catch([]),
+});
+export type CalendarEventsOutput = z.infer<typeof calendarEventsSchema>;
+
+export const CALENDAR_EXTRACT_SYSTEM = `你是用户的日程助理。从下面的邮件清单里，找出**有明确日期的真实日程/待办**并抽取出来，例如：会议、面试、预约、约见、航班/车次、酒店入住、缴费/还款截止、活动、DDL 等。抽取结果会写入 Google 任务（按日期作为截止日）。
+
+规则：
+- 只抽取能**确定到某一天**的事项；模糊的（"最近""有空时""尽快"）一律忽略。
+- **只输出日期**：date 用 YYYY-MM-DD。**不要输出时间**（Google 任务不保存时间）。若邮件里有具体时间，把时间点写进 note（如「15:00 开始」），date 仍填当天日期。
+- title 用简洁中文概括（如「与张总视频会议」「XX 账单还款」）；location（地点）有就填、note（时间/备注）有就填，没有留空。
+- messageId 必须用清单里给出的 id，一封邮件可产出 0 或多个事项；没有可加入的日程时返回空数组。
+- 当前时间会在用户消息里给出，用于理解"明天""下周三"等相对表述。`;

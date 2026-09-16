@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { aiAnnotations, folders, mailAccounts, messages, rules, type CompiledRule, type Message, type Rule, type RuleAction, type RuleCondition } from "@/db/schema";
 import { stripHtml } from "@/lib/quote";
-import { deleteMessages, enqueueRawOperation, loadOwnedMessages, markMessages, moveMessages, setGmailLabels } from "@/server/mail/ops";
+import { deleteMessages, enqueueRawOperation, loadOwnedMessages, markMessages, moveMessages, setGmailLabels, tagForAssistant } from "@/server/mail/ops";
 import { runRole } from "./client";
 
 /**
@@ -38,13 +38,13 @@ export const compiledRuleSchema = z.object({
 
 const RULE_FIELDS = new Set<RuleCondition["field"]>(["from", "to", "subject", "body", "category", "priority", "hasAttachment", "needsReply", "listId"]);
 const RULE_OPS = new Set<RuleCondition["op"]>(["contains", "not_contains", "equals", "starts_with", "ends_with", "matches", "is_true", "is_false"]);
-const RULE_ACTIONS = new Set<RuleAction["type"]>(["archive", "trash", "mark_read", "mark_unread", "flag", "junk", "move", "label"]);
+const RULE_ACTIONS = new Set<RuleAction["type"]>(["archive", "trash", "mark_read", "mark_unread", "flag", "junk", "move", "label", "assistant"]);
 
 export const RULES_SYSTEM = `你是邮件规则编译器。把用户用自然语言描述的邮件处理规则，转换成结构化 JSON 规则。
 
 可用字段（field）：from（发件人名字+地址）、to（收件人）、subject（主题）、body（正文摘要）、category（AI 分类：important/todo/notification/billing/newsletter/promotion/social/personal/other）、priority（AI 优先级：high/normal/low）、hasAttachment（是否有附件）、needsReply（AI 判断是否需要回复）、listId（邮件列表 ID，订阅类邮件常有）。
 可用操作符（op）：contains / not_contains / equals / starts_with / ends_with / matches（正则）/ is_true / is_false（布尔字段用后两者，value 填 null）。
-可用动作（type）：archive（归档）、trash（删除到已删除）、mark_read、mark_unread、flag（星标）、junk（垃圾邮件）、move（移动到文件夹，value 填文件夹名）、label（打 Gmail 标签，value 填标签名）。
+可用动作（type）：archive（归档）、trash（删除到已删除）、mark_read、mark_unread、flag（星标）、junk（垃圾邮件）、move（移动到文件夹，value 填文件夹名）、label（打 Gmail 标签，value 填标签名）、assistant（转给 AI 助手：把邮件归入「Assistant」标签/文件夹供助手读取，无需 value；用户说「转给助手 / 交给助理 / 让助手处理 / 同步给 assistant」时用它）。
 规则：
 - 文本匹配不区分大小写；
 - match 为 all 表示全部条件都满足，any 表示任一满足；
@@ -180,6 +180,9 @@ async function executeActions(userId: string, message: Message, rule: CompiledRu
         break;
       case "flag":
         await markMessages(userId, [message.id], { flagged: true });
+        break;
+      case "assistant":
+        await tagForAssistant(userId, [message.id]);
         break;
       case "label": {
         if (!action.value) break;

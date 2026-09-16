@@ -7,7 +7,7 @@ import type { ComposePayload } from "@/lib/api-types";
 import { formatAddrList, quoteText, replySubject } from "@/lib/quote";
 import type { DigestActionType } from "@/db/schema";
 import { draftReply } from "@/server/ai/assist";
-import { executeDispositions, generateDigest, markDispositionStatus, replanDigest, updateDisposition, type DigestKind, type RangeOptions } from "@/server/ai/digest";
+import { executeDispositions, generateDigest, markDispositionStatus, markRestNone, replanDigest, updateDisposition, type DigestKind, type RangeOptions } from "@/server/ai/digest";
 import { requireUser } from "@/server/auth/session";
 import { sendMail } from "@/server/mail/send";
 
@@ -56,6 +56,14 @@ export async function updateDispositionAction(periodKey: string, messageId: stri
   return run(async () => {
     const user = await requireUser();
     await updateDisposition(user.id, periodKey, messageId, { action, value: value ?? null });
+  });
+}
+
+/** 其余全部标记无需处理：把所有未处理的意见一律设为 none */
+export async function markRestNoneAction(periodKey: string) {
+  return run(async () => {
+    const user = await requireUser();
+    return markRestNone(user.id, periodKey);
   });
 }
 

@@ -50,6 +50,13 @@
       "when": 1789310389046,
       "tag": "0006_past_professor_monster",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789428104199,
+      "tag": "0007_thankful_nighthawk",
+      "breakpoints": true
     }
   ]
 }

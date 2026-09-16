@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronLeft, ChevronRight, Loader2, RefreshCw, Reply, Send, Sparkles, Wand2 } from "lucide-react";
+import { Check, CheckCheck, ChevronLeft, ChevronRight, Loader2, RefreshCw, Reply, Send, Sparkles, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
@@ -15,6 +15,7 @@ import {
   digestDraftReplyAction,
   digestSendReplyAction,
   executeDigestAction,
+  markRestNoneAction,
   refreshDigestAction,
   replanDigestAction,
   updateDispositionAction,
@@ -23,7 +24,7 @@ import {
 const DISPOSITION_LABELS: Record<DigestActionType, string> = {
   reply: "回复",
   flag: "加星标",
-  todo: "记为待办",
+  todo: "记为待办（谷歌任务）",
   label: "打标签",
   archive: "归档",
   mark_read: "标记已读",
@@ -197,6 +198,21 @@ export function DigestView(props: {
 
   const selectableIds = plan.filter((d) => isAuto(d.action) && d.status !== "done").map((d) => d.messageId);
   const allSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+  /** 尚未处理、且还不是「无需处理」的数量 —— 用于「剩余全部标记无需处理」 */
+  const pendingCount = plan.filter((d) => d.status !== "done" && d.action !== "none").length;
+
+  const markRest = () =>
+    start(async () => {
+      const r = await markRestNoneAction(periodKey);
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      setPlan(r.data.plan);
+      setSelected(new Set());
+      setReply(null);
+      toast.success(r.data.changed ? `已把剩余 ${r.data.changed} 封标记为无需处理` : "没有需要标记的邮件");
+    });
 
   const executeSelected = () =>
     start(async () => {
@@ -412,21 +428,26 @@ export function DigestView(props: {
 
       {/* 邮件与处理意见 */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-2">
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-base">邮件与处理意见（{items.length}）</CardTitle>
-          {generated && selectableIds.length ? (
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={(e) => setSelected(e.target.checked ? new Set(selectableIds) : new Set())}
-                />
-                全选可自动处理
-              </label>
-              <Button size="sm" onClick={executeSelected} disabled={pending || selected.size === 0}>
-                {pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />} 确认并处理（{selected.size}）
-              </Button>
+          {generated ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {pendingCount ? (
+                <Button size="sm" variant="outline" onClick={markRest} disabled={pending} title="把剩余未处理的邮件全部标记为「无需处理」">
+                  {pending ? <Loader2 className="size-4 animate-spin" /> : <CheckCheck className="size-4" />} 剩余全部标记无需处理
+                </Button>
+              ) : null}
+              {selectableIds.length ? (
+                <>
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <input type="checkbox" checked={allSelected} onChange={(e) => setSelected(e.target.checked ? new Set(selectableIds) : new Set())} />
+                    全选可自动处理
+                  </label>
+                  <Button size="sm" onClick={executeSelected} disabled={pending || selected.size === 0}>
+                    {pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />} 确认并处理（{selected.size}）
+                  </Button>
+                </>
+              ) : null}
             </div>
           ) : null}
         </CardHeader>

@@ -65,8 +65,8 @@ export interface RuleCondition {
   value?: string;
 }
 export interface RuleAction {
-  type: "archive" | "trash" | "mark_read" | "mark_unread" | "flag" | "junk" | "move" | "label";
-  /** move：目标文件夹路径；label：Gmail 标签名 */
+  type: "archive" | "trash" | "mark_read" | "mark_unread" | "flag" | "junk" | "move" | "label" | "assistant";
+  /** move：目标文件夹路径；label：Gmail 标签名；assistant：无需 value */
   value?: string;
 }
 export interface CompiledRule {
@@ -282,6 +282,8 @@ export const aiAnnotations = pgTable("ai_annotations", {
   summary: text("summary"),
   actionItems: jsonb("action_items").$type<ActionItem[]>().notNull().default([]),
   reason: text("reason"),
+  /** @deprecated 旧的本地「记为待办」标记。待办已改为写入 Google 任务，此列不再读写；保留仅避免破坏性迁移。 */
+  isTodo: boolean("is_todo").notNull().default(false),
   model: text("model").notNull(),
   promptVersion: text("prompt_version").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -425,6 +427,25 @@ export const oauthClients = pgTable(
   (t) => [uniqueIndex("oauth_clients_user_provider_uq").on(t.userId, t.provider)],
 );
 
+/**
+ * Google 服务连接（日历 / 任务）：与「连接邮箱」的 OAuth 分开，申请 calendar + tasks 授权范围，
+ * token 单独加密存储。日历 / 任务页直接调 Google API（Google 为唯一真相源，实时双向同步）。
+ */
+export const googleConnections = pgTable("google_connections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** 授权账号的邮箱（展示用） */
+  email: text("email"),
+  /** 加密 JSON：{ accessToken, refreshToken, expiresAt, clientId } */
+  credentialsEnc: text("credentials_enc").notNull(),
+  /** 已授予的 scope（空格分隔），用于判断日历 / 任务权限是否齐全 */
+  scope: text("scope"),
+  ...timestamps,
+});
+
 /** 自然语言规则 */
 export const rules = pgTable("rules", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -525,3 +546,4 @@ export type MessageTranslation = typeof messageTranslations.$inferSelect;
 export type ChatThread = typeof chatThreads.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type DigestReport = typeof digestReports.$inferSelect;
+export type GoogleConnection = typeof googleConnections.$inferSelect;

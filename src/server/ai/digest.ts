@@ -335,6 +335,24 @@ export async function updateDisposition(
   await db.update(digestReports).set({ plan, updatedAt: new Date() }).where(eq(digestReports.id, report.id));
 }
 
+/**
+ * 「其余全部标记无需处理」：把该时间段里所有**尚未处理（非 done）**的处理意见一律设为 none。
+ * 用于用户处理完该处理的邮件后，一键清空剩余待处理项。返回更新后的完整 plan。
+ */
+export async function markRestNone(userId: string, periodKey: string): Promise<{ plan: DigestDisposition[]; changed: number }> {
+  const db = await getDb();
+  const report = await db.query.digestReports.findFirst({ where: and(eq(digestReports.userId, userId), eq(digestReports.periodKey, periodKey)) });
+  if (!report) throw new Error("摘要不存在");
+  let changed = 0;
+  const plan = (report.plan ?? []).map((d) => {
+    if (d.status === "done" || d.action === "none") return d;
+    changed += 1;
+    return { ...d, action: "none" as const, status: "pending" as const };
+  });
+  await db.update(digestReports).set({ plan, updatedAt: new Date() }).where(eq(digestReports.id, report.id));
+  return { plan, changed };
+}
+
 /** 旧接口（按天，只要概览），保留给测试与简单调用 */
 export async function dailyDigest(userId: string, day: string, opts: { refresh?: boolean } = {}): Promise<{ items: DigestItem[]; content: string | null; model?: string; cached: boolean }> {
   const r = await generateDigest(userId, "day", { day, refresh: opts.refresh, withPlan: false });
@@ -409,9 +427,14 @@ export async function executeDispositions(userId: string, periodKey: string, mes
           await markMessages(userId, [d.messageId], { seen: true });
           break;
         case "flag":
-        case "todo": // 记为待办：先加星标，保留在收件箱，待办面板会汇总其 actionItems
           await markMessages(userId, [d.messageId], { flagged: true });
           break;
+        case "todo": {
+          // 记为待办：在 Google 任务（默认清单）里创建一条任务，与 Google Tasks 双向同步（本地不再单独存待办）
+          const { createTaskFromMessage } = await import("@/server/google/tasks");
+          await createTaskFromMessage(userId, d.messageId);
+          break;
+        }
         case "label": {
           const [row] = await loadOwnedForLabel(userId, d.messageId);
           if (row) await setGmailLabels(row.accountId, row.folderPath, [row.uid], [d.value || "AI/Other"]);
