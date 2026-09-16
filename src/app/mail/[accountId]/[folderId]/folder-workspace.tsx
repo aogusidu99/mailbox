@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api-client";
 import type { MessageDetail, MessageListItem } from "@/lib/api-types";
 import { useT } from "@/lib/locale-context";
-import { formatAddrList, forwardHeader, forwardSubject, quoteText, replyAllRecipients, replySubject, stripHtml } from "@/lib/quote";
+import { formatAddrList, forwardSubject, replyAllRecipients, replySubject, stripHtml } from "@/lib/quote";
 
 /** 文件夹页面的客户端外壳：注入操作工具栏、写信对话框、自动已读。 */
 export function FolderWorkspace({
@@ -72,21 +72,22 @@ export function FolderWorkspace({
     if (readTimer.current) clearTimeout(readTimer.current);
   }, []);
 
+  // 引用 / 转发块一律由服务端按 inReplyToMessageId / forwardOfMessageId 生成（保留原邮件富 HTML），
+  // 这里只放用户要写的正文，编辑器不再内联纯文本引用。
   const buildCompose = (m: MessageDetail, kind: ReplyKind, aiText?: string): ComposeInitial => {
-    const bodyText = m.text?.trim() || (m.html ? stripHtml(m.html) : "");
     switch (kind) {
       case "aiReply":
         return {
           to: formatAddrList(m.replyTo.length ? m.replyTo : m.from),
           subject: replySubject(m.subject),
-          text: `${aiText ?? ""}${quoteText({ from: m.from, date: m.date, text: m.text, html: m.html })}`,
+          text: aiText ?? "",
           inReplyToMessageId: m.id,
         };
       case "reply":
         return {
           to: formatAddrList(m.replyTo.length ? m.replyTo : m.from),
           subject: replySubject(m.subject),
-          text: quoteText({ from: m.from, date: m.date, text: m.text, html: m.html }),
+          text: "",
           inReplyToMessageId: m.id,
         };
       case "replyAll": {
@@ -95,14 +96,14 @@ export function FolderWorkspace({
           to: formatAddrList(r.to),
           cc: formatAddrList(r.cc),
           subject: replySubject(m.subject),
-          text: quoteText({ from: m.from, date: m.date, text: m.text, html: m.html }),
+          text: "",
           inReplyToMessageId: m.id,
         };
       }
       case "forward":
         return {
           subject: forwardSubject(m.subject),
-          text: `${forwardHeader({ from: m.from, to: m.to, date: m.date, subject: m.subject })}${bodyText}`,
+          text: "",
           forwardOfMessageId: m.id,
           includeOriginalAttachments: m.attachments.length > 0,
           originalAttachmentNames: m.attachments.map((a) => a.filename || "附件"),
@@ -113,7 +114,7 @@ export function FolderWorkspace({
           cc: formatAddrList(m.cc),
           bcc: formatAddrList(m.bcc),
           subject: m.subject ?? "",
-          text: bodyText,
+          text: m.text?.trim() || (m.html ? stripHtml(m.html) : ""),
           draftMessageId: m.id,
         };
     }

@@ -2,12 +2,15 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { attachments, mailAccounts, messages, type EmailAddress } from "@/db/schema";
 import type { ComposePayload } from "@/lib/api-types";
+import { forwardHeader, quoteText, stripHtml } from "@/lib/quote";
 import { withProvider } from "@/server/providers/factory";
 import { describeImapError } from "@/server/providers/imap";
 import { getPreset, type PresetId } from "@/server/providers/presets";
 import { buildMime, parseAddressList, removeUpload, type ComposeAttachmentInput } from "./compose";
+import { textToHtml } from "./html";
 import { appendToRoleFolder, deleteMessageHard, markAnswered } from "./ops";
 import { getAttachmentContent } from "./queries";
+import { htmlForwardQuote, htmlReplyQuote } from "./reply-html";
 
 /**
  * 发送 / 存草稿。发送走 SMTP 同步完成（用户立刻得到结果）；
@@ -44,7 +47,31 @@ async function forwardedAttachments(userId: string, messageId: string | undefine
   return out;
 }
 
-function composeInput(payload: ComposePayload, from: EmailAddress, thread: { inReplyTo?: string; references?: string[] }, extra: ComposeAttachmentInput[]) {
+/**
+ * 组装正文：用户正文 + 引用/转发块。
+ * - 纯文本部分：quoteText / forwardHeader（兼容纯文本客户端）；
+ * - HTML 部分：把**原邮件富 HTML** 包进 <blockquote>（Gmail 阶梯竖线，保留表格/颜色/图片）。
+ * 客户端只发用户正文（不再内联引用），引用一律由服务端按 inReplyToMessageId / forwardOfMessageId 生成。
+ */
+async function buildBody(payload: ComposePayload): Promise<{ text: string; html: string }> {
+  const userText = payload.text ?? "";
+  const quoteId = payload.inReplyToMessageId ?? payload.forwardOfMessageId;
+  if (!quoteId) return { text: userText, html: textToHtml(userText) };
+  const db = await getDb();
+  const orig = await db.query.messages.findFirst({ where: eq(messages.id, quoteId) });
+  if (!orig) return { text: userText, html: textToHtml(userText) };
+  const dateIso = orig.date ? orig.date.toISOString() : null;
+  if (payload.forwardOfMessageId) {
+    const origText = orig.textBody?.trim() || (orig.htmlBody ? stripHtml(orig.htmlBody) : "");
+    const text = userText + forwardHeader({ from: orig.fromAddrs, to: orig.toAddrs, date: dateIso, subject: orig.subject }) + origText;
+    return { text, html: textToHtml(userText) + htmlForwardQuote(orig) };
+  }
+  const text = userText + quoteText({ from: orig.fromAddrs, date: dateIso, text: orig.textBody, html: orig.htmlBody });
+  return { text, html: textToHtml(userText) + htmlReplyQuote(orig) };
+}
+
+async function composeInput(payload: ComposePayload, from: EmailAddress, thread: { inReplyTo?: string; references?: string[] }, extra: ComposeAttachmentInput[]) {
+  const { text, html } = await buildBody(payload);
   const to = parseAddressList(payload.to);
   return {
     from,
@@ -52,7 +79,8 @@ function composeInput(payload: ComposePayload, from: EmailAddress, thread: { inR
     cc: parseAddressList(payload.cc),
     bcc: parseAddressList(payload.bcc),
     subject: payload.subject.trim(),
-    text: payload.text,
+    text,
+    html,
     inReplyTo: thread.inReplyTo,
     references: thread.references,
     attachments: [
@@ -85,7 +113,7 @@ export async function sendMail(userId: string, accountId: string, payload: Compo
   const from: EmailAddress = { name: account.displayName ?? undefined, address: account.email };
   const thread = await resolveThreadHeaders(payload.inReplyToMessageId);
   const extra = payload.forwardOfMessageId && payload.includeOriginalAttachments ? await forwardedAttachments(userId, payload.forwardOfMessageId) : [];
-  const input = composeInput(payload, from, thread, extra);
+  const input = await composeInput(payload, from, thread, extra);
   // 回复时按账号设置自动密送一份给自己（BCC 不进邮件头，收件人看不到）
   const selfBcc = bccSelfAddress({
     enabled: account.bccSelfOnReply,
@@ -121,7 +149,7 @@ export async function saveDraft(userId: string, accountId: string, payload: Comp
   const account = await loadAccount(userId, accountId);
   const from: EmailAddress = { name: account.displayName ?? undefined, address: account.email };
   const thread = await resolveThreadHeaders(payload.inReplyToMessageId);
-  const input = composeInput(payload, from, thread, []);
+  const input = await composeInput(payload, from, thread, []);
   const { mime } = await buildMime(input);
   await appendToRoleFolder(account, "drafts", mime, ["Draft", "Seen"]);
   if (payload.draftMessageId) await deleteMessageHard(userId, payload.draftMessageId).catch(() => undefined);

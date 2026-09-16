@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { mailAccounts, messages } from "@/db/schema";
 import type { ComposePayload } from "@/lib/api-types";
-import { formatAddrList, quoteText, replySubject } from "@/lib/quote";
+import { formatAddrList, replySubject } from "@/lib/quote";
 import type { DigestActionType } from "@/db/schema";
 import { draftReply } from "@/server/ai/assist";
 import { executeDispositions, generateDigest, markDispositionStatus, markRestNone, replanDigest, updateDisposition, type DigestKind, type RangeOptions } from "@/server/ai/digest";
@@ -88,10 +88,11 @@ export async function digestSendReplyAction(periodKey: string, messageId: string
     if (!account) throw new Error("邮件不存在");
 
     const recipients = message.replyToAddrs.length ? message.replyToAddrs : message.fromAddrs;
+    // 只发用户正文；引用（含原邮件富 HTML）由 sendMail 按 inReplyToMessageId 生成
     const payload: ComposePayload = {
       to: formatAddrList(recipients),
       subject: replySubject(message.subject),
-      text: body + quoteText({ from: message.fromAddrs, date: message.date ? message.date.toISOString() : null, text: message.textBody, html: message.htmlBody }),
+      text: body,
       attachments: [],
       inReplyToMessageId: messageId,
     };

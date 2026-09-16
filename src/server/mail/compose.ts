@@ -26,6 +26,8 @@ export interface ComposeInput {
   subject: string;
   /** 纯文本正文（编辑器内容） */
   text: string;
+  /** HTML 正文；不传则由 text 生成（回复/转发会传入含富引用的 HTML） */
+  html?: string;
   inReplyTo?: string;
   references?: string[];
   attachments?: ComposeAttachmentInput[];
@@ -83,7 +85,7 @@ export async function buildMime(input: ComposeInput): Promise<{ mime: Buffer; me
     bcc: input.bcc?.map(formatAddress),
     subject: input.subject,
     text: input.text,
-    html: textToHtml(input.text),
+    html: input.html ?? textToHtml(input.text),
     inReplyTo: input.inReplyTo,
     references: input.references?.join(" "),
     attachments,
