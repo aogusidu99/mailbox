@@ -338,8 +338,8 @@ export function CalendarWorkspace({
 
   return (
     <div className="flex h-full min-h-0">
-      {/* 左：控制栏（宽屏 xl+ 才显示；更窄时新建/视图在中间工具栏） */}
-      <aside className="hidden w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r p-3 xl:flex">
+      {/* 左：控制栏（小日历 + 日历列表，仿 Google 日历的左栏；lg+ 显示——app 侧栏已占 256px，故这一列比手机断点晚一步。更窄时新建/AI 在中间工具栏） */}
+      <aside className="hidden w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r p-3 lg:flex">
         <Button size="sm" onClick={() => setDraft(emptyDraft())} disabled={pending}>
           <CalendarPlus className="size-4" /> 新建日程
         </Button>
@@ -370,10 +370,10 @@ export function CalendarWorkspace({
       <div className="flex min-w-0 flex-1 flex-col">
         {/* 工具栏 */}
         <div className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
-          <Button size="sm" onClick={() => setDraft(emptyDraft())} disabled={pending} className="xl:hidden">
+          <Button size="sm" onClick={() => setDraft(emptyDraft())} disabled={pending} className="lg:hidden">
             <CalendarPlus className="size-4" /> 新建
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setShowAi((v) => !v)} className="xl:hidden" aria-label="AI 提取日程">
+          <Button size="sm" variant="outline" onClick={() => setShowAi((v) => !v)} className="lg:hidden" aria-label="AI 提取日程">
             <Sparkles className="size-4" />
           </Button>
           <Button size="sm" variant="outline" onClick={() => setCursor(new Date())}>今天</Button>
@@ -587,8 +587,8 @@ export function CalendarWorkspace({
         </div>
       </div>
 
-      {/* 右：任务（lg+ 显示，宽度随屏增长；更窄时用侧栏「谷歌任务」标签页） */}
-      <aside className="hidden w-72 shrink-0 overflow-y-auto border-l p-3 lg:block xl:w-96 2xl:w-[28rem]">
+      {/* 右：任务（min-[1180px]+ 显示——比左栏晚一步让位，先保证日历宽度；宽度随屏增长；更窄时用侧栏「谷歌任务」标签页） */}
+      <aside className="hidden w-72 shrink-0 overflow-y-auto border-l p-3 min-[1180px]:block xl:w-96 2xl:w-[28rem]">
         <TasksView compact lists={tasks.lists} defaultListId={tasks.defaultListId} initialTasks={tasks.initialTasks} email={email} initialError={null} />
       </aside>
     </div>
