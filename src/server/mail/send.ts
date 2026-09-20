@@ -7,7 +7,7 @@ import { withProvider } from "@/server/providers/factory";
 import { describeImapError } from "@/server/providers/imap";
 import { getPreset, type PresetId } from "@/server/providers/presets";
 import { buildMime, parseAddressList, removeUpload, type ComposeAttachmentInput } from "./compose";
-import { textToHtml } from "./html";
+import { markdownToEmailHtml } from "./html";
 import { appendToRoleFolder, deleteMessageHard, markAnswered } from "./ops";
 import { getAttachmentContent } from "./queries";
 import { htmlForwardQuote, htmlReplyQuote } from "./reply-html";
@@ -56,18 +56,18 @@ async function forwardedAttachments(userId: string, messageId: string | undefine
 async function buildBody(payload: ComposePayload): Promise<{ text: string; html: string }> {
   const userText = payload.text ?? "";
   const quoteId = payload.inReplyToMessageId ?? payload.forwardOfMessageId;
-  if (!quoteId) return { text: userText, html: textToHtml(userText) };
+  if (!quoteId) return { text: userText, html: markdownToEmailHtml(userText) };
   const db = await getDb();
   const orig = await db.query.messages.findFirst({ where: eq(messages.id, quoteId) });
-  if (!orig) return { text: userText, html: textToHtml(userText) };
+  if (!orig) return { text: userText, html: markdownToEmailHtml(userText) };
   const dateIso = orig.date ? orig.date.toISOString() : null;
   if (payload.forwardOfMessageId) {
     const origText = orig.textBody?.trim() || (orig.htmlBody ? stripHtml(orig.htmlBody) : "");
     const text = userText + forwardHeader({ from: orig.fromAddrs, to: orig.toAddrs, date: dateIso, subject: orig.subject }) + origText;
-    return { text, html: textToHtml(userText) + htmlForwardQuote(orig) };
+    return { text, html: markdownToEmailHtml(userText) + htmlForwardQuote(orig) };
   }
   const text = userText + quoteText({ from: orig.fromAddrs, date: dateIso, text: orig.textBody, html: orig.htmlBody });
-  return { text, html: textToHtml(userText) + htmlReplyQuote(orig) };
+  return { text, html: markdownToEmailHtml(userText) + htmlReplyQuote(orig) };
 }
 
 async function composeInput(payload: ComposePayload, from: EmailAddress, thread: { inReplyTo?: string; references?: string[] }, extra: ComposeAttachmentInput[]) {

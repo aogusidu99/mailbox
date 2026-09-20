@@ -3,7 +3,8 @@
 import { Loader2, Paperclip, Send, Sparkles, X } from "lucide-react";
 import { useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { aiDraftEmailAction, saveDraftAction, sendMailAction } from "@/app/mail/actions";
+import { aiDraftEmailAction, renderComposePreviewAction, saveDraftAction, sendMailAction } from "@/app/mail/actions";
+import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -63,6 +64,10 @@ export function ComposeDialog({
   const [showAi, setShowAi] = useState(false);
   const [aiInstructions, setAiInstructions] = useState("");
   const [aiPending, startAi] = useTransition();
+  // 正文按 Markdown 撰写，可切到「预览」看将要发送的样子
+  const [mode, setMode] = useState<"edit" | "preview">("edit");
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewing, startPreview] = useTransition();
 
   const payload = (): ComposePayload => ({
     to,
@@ -137,6 +142,18 @@ export function ComposeDialog({
     });
   };
 
+  const showPreview = () => {
+    setMode("preview");
+    startPreview(async () => {
+      const r = await renderComposePreviewAction(text);
+      if (r.ok) setPreviewHtml(r.data.html);
+      else {
+        setPreviewHtml("");
+        toast.error(r.error);
+      }
+    });
+  };
+
   const busy = sending || saving || uploading || aiPending;
   const title = initial?.draftMessageId ? t.titleDraft : initial?.inReplyToMessageId ? t.titleReply : initial?.forwardOfMessageId ? t.titleForward : t.titleNew;
 
@@ -198,13 +215,42 @@ export function ComposeDialog({
               </Button>
             </div>
           </div>
-        ) : (
-          <button type="button" onClick={() => setShowAi(true)} className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground" disabled={busy}>
-            <Sparkles className="size-3.5" /> AI 起草
-          </button>
-        )}
+        ) : null}
 
-        <Textarea aria-label={t.body} value={text} onChange={(e) => setText(e.target.value)} className="min-h-[240px] flex-1 resize-y font-sans text-sm" placeholder={t.bodyPlaceholder} />
+        {/* 正文工具条：AI 起草 · Markdown 提示 · 编辑/预览 */}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          {!showAi ? (
+            <button type="button" onClick={() => setShowAi(true)} className="inline-flex items-center gap-1 hover:text-foreground" disabled={busy}>
+              <Sparkles className="size-3.5" /> AI 起草
+            </button>
+          ) : null}
+          <span className="hidden sm:inline">支持 Markdown：**粗体**、- 列表、[链接](网址)、# 标题</span>
+          <div className="ml-auto inline-flex overflow-hidden rounded-md border">
+            <button type="button" onClick={() => setMode("edit")} className={cn("px-2 py-0.5", mode === "edit" ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>
+              编辑
+            </button>
+            <button type="button" onClick={showPreview} className={cn("px-2 py-0.5", mode === "preview" ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>
+              预览
+            </button>
+          </div>
+        </div>
+
+        {mode === "preview" ? (
+          <div className="min-h-[240px] flex-1 overflow-auto rounded-md border p-3">
+            {previewing ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" /> 渲染中…
+              </div>
+            ) : previewHtml ? (
+              // 内容由服务端 sanitizeEmailHtml 清洗过，安全注入；就是将要发送的样子
+              <div className="text-sm" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+            ) : (
+              <div className="text-sm text-muted-foreground">（正文为空）</div>
+            )}
+          </div>
+        ) : (
+          <Textarea aria-label={t.body} value={text} onChange={(e) => setText(e.target.value)} className="min-h-[240px] flex-1 resize-y font-sans text-sm" placeholder={t.bodyPlaceholder} />
+        )}
 
         {initial?.originalAttachmentNames?.length ? (
           <label className="flex items-center gap-2 text-xs text-muted-foreground">

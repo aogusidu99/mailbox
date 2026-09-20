@@ -105,6 +105,15 @@ export async function aiDraftEmailAction(accountId: string, input: { instruction
   });
 }
 
+/** 撰写预览：把 Markdown 正文渲染成将要发送的邮件 HTML（所见即所得，与发信同一套渲染） */
+export async function renderComposePreviewAction(text: string) {
+  return run(async () => {
+    await requireUser();
+    const { markdownToEmailHtml } = await import("@/server/mail/html");
+    return { html: markdownToEmailHtml(text) };
+  });
+}
+
 export async function aiAnalyzeAction(messageId: string) {
   return run(async () => {
     const user = await requireUser();

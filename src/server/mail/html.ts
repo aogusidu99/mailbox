@@ -1,3 +1,4 @@
+import { marked } from "marked";
 import sanitizeHtml from "sanitize-html";
 
 /**
@@ -160,6 +161,27 @@ export function textToHtml(text: string): string {
     depth -= 1;
   }
   return `<div style="white-space:pre-wrap;font-family:ui-sans-serif,system-ui,sans-serif;font-size:14px;line-height:1.6">${out}</div>`;
+}
+
+/**
+ * 邮件安全字体栈：跨客户端（含不认 ui-sans-serif/system-ui 的 Outlook）稳定，带中文回退。
+ * 不设它时很多客户端会回退到 Times New Roman 衬线——邮件"变丑"的常见原因。
+ */
+// 注意：字体名用单引号——外层是 style="…" 双引号属性，内部若再用双引号会截断属性。
+const EMAIL_FONT_STACK = `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif`;
+
+/**
+ * 撰写正文（Markdown）→ 邮件安全 HTML。用于**发信的用户正文**（收到的纯文本邮件显示仍用 textToHtml）。
+ * - marked 解析（GFM + 单个换行也成 <br>，符合写邮件的直觉）；
+ * - 复用收信侧的 sanitizeEmailHtml 清洗（同一套标签/样式白名单，允许表格/加粗/列表/链接等）；
+ * - 外层 div 设邮件安全字体栈 + 字号/行高，修掉字体回退衬线与段距松散。
+ */
+export function markdownToEmailHtml(md: string): string {
+  const source = (md ?? "").trim();
+  if (!source) return "";
+  const raw = marked.parse(source, { gfm: true, breaks: true, async: false }) as string;
+  const { html } = sanitizeEmailHtml(raw, { allowRemoteImages: true });
+  return `<div style="font-family:${EMAIL_FONT_STACK};font-size:14px;line-height:1.6;color:#222">${html}</div>`;
 }
 
 /** 把 HTML 压成一段纯文本摘要。 */
