@@ -1,9 +1,9 @@
 "use client";
 
-import { Loader2, Paperclip, Send, X } from "lucide-react";
+import { Loader2, Paperclip, Send, Sparkles, X } from "lucide-react";
 import { useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { saveDraftAction, sendMailAction } from "@/app/mail/actions";
+import { aiDraftEmailAction, saveDraftAction, sendMailAction } from "@/app/mail/actions";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -59,6 +59,10 @@ export function ComposeDialog({
   const [sending, startSend] = useTransition();
   const [saving, startSave] = useTransition();
   const fileInput = useRef<HTMLInputElement>(null);
+  // AI 起草：给要求 → 自动拟主题 + 正文（类似回复的 AI 起草）
+  const [showAi, setShowAi] = useState(false);
+  const [aiInstructions, setAiInstructions] = useState("");
+  const [aiPending, startAi] = useTransition();
 
   const payload = (): ComposePayload => ({
     to,
@@ -116,7 +120,24 @@ export function ComposeDialog({
       onOpenChange(false);
     });
 
-  const busy = sending || saving || uploading;
+  const aiDraft = () => {
+    // 已有正文时先确认，避免覆盖用户已写的内容
+    if (text.trim() && !window.confirm("用 AI 起草会替换当前正文，继续？")) return;
+    startAi(async () => {
+      const r = await aiDraftEmailAction(accountId, { instructions: aiInstructions, to, subject });
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      if (r.data.subject && !subject.trim()) setSubject(r.data.subject);
+      setText(r.data.text);
+      setShowAi(false);
+      setAiInstructions("");
+      toast.success(`已用 ${r.data.model} 起草，可继续编辑`);
+    });
+  };
+
+  const busy = sending || saving || uploading || aiPending;
   const title = initial?.draftMessageId ? t.titleDraft : initial?.inReplyToMessageId ? t.titleReply : initial?.forwardOfMessageId ? t.titleForward : t.titleNew;
 
   return (
@@ -162,6 +183,26 @@ export function ComposeDialog({
             <Input id="compose-subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
           </div>
         </div>
+
+        {/* AI 起草：说明要求 → 自动拟主题 + 正文 */}
+        {showAi ? (
+          <div className="space-y-2 rounded-md border bg-muted/30 p-2">
+            <div className="text-xs text-muted-foreground">告诉 AI 你想写什么，它会起草主题和正文（可继续编辑）。例如「向房东申请提前退租，语气礼貌，说明下月中旬搬走」。</div>
+            <Textarea aria-label="AI 起草要求" value={aiInstructions} onChange={(e) => setAiInstructions(e.target.value)} placeholder="写作要求…" className="min-h-16 text-sm" />
+            <div className="flex justify-end gap-2">
+              <Button size="xs" variant="ghost" onClick={() => setShowAi(false)} disabled={aiPending}>
+                取消
+              </Button>
+              <Button size="xs" onClick={aiDraft} disabled={aiPending}>
+                {aiPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} 生成草稿
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" onClick={() => setShowAi(true)} className="inline-flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground" disabled={busy}>
+            <Sparkles className="size-3.5" /> AI 起草
+          </button>
+        )}
 
         <Textarea aria-label={t.body} value={text} onChange={(e) => setText(e.target.value)} className="min-h-[240px] flex-1 resize-y font-sans text-sm" placeholder={t.bodyPlaceholder} />
 

@@ -98,6 +98,23 @@ export const DRAFT_SYSTEM = `你是用户的邮件写作助手。根据原邮件
 
 export const SUMMARY_SYSTEM = `你是用户的邮件助理，请用中文写清晰、简洁的摘要。`;
 
+// ---------- 撰写新邮件（AI 起草） ----------
+
+export const COMPOSE_SYSTEM = `你是用户的邮件写作助手。根据用户的要求，代用户起草一封**新邮件**（不是回复）。
+要求：
+- 用与用户要求相同的语言（中文要求写中文，英文要求写英文）；
+- 语气自然、简洁、礼貌，符合职场邮件习惯；结构清晰（问候 / 正文 / 结尾）；
+- 分别给出主题 subject 与正文 body：subject 一句话概括；body 含称呼与落款占位「[你的名字]」；
+- 若用户已给出主题，subject 在其基础上沿用或润色；
+- 不要编造事实；需要用户补充的信息用【】标出。`;
+
+/** AI 起草新邮件的结构化输出：主题 + 正文 */
+export const composeDraftSchema = z.object({
+  subject: z.string(),
+  body: z.string(),
+});
+export type ComposeDraftOutput = z.infer<typeof composeDraftSchema>;
+
 // ---------- 邮件翻译 ----------
 
 /** 常见语言 code → 名称（供翻译提示词把 code 变成人类可读语言名） */

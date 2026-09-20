@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CheckCheck, ChevronLeft, ChevronRight, Loader2, RefreshCw, Reply, Send, Sparkles, Wand2 } from "lucide-react";
+import { Check, CheckCheck, ChevronLeft, ChevronRight, ExternalLink, Loader2, RefreshCw, Reply, Send, Sparkles, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
@@ -280,8 +280,9 @@ export function DigestView(props: {
               {done ? <span className="rounded bg-emerald-100 px-1 text-[10px] text-emerald-700">已处理</span> : null}
               {i.account ? <span className="rounded bg-sky-50 px-1 text-[10px] text-sky-700" title="所属邮箱">{i.account}</span> : null}
               <span className="font-medium">{i.from}</span>
-              <Link href={`/mail/${i.accountId}/${i.folderId}?m=${i.messageId}`} className="truncate text-muted-foreground hover:underline">
-                {i.subject ?? "(无主题)"}
+              <Link href={`/mail/${i.accountId}/${i.folderId}?m=${i.messageId}`} className="inline-flex min-w-0 items-center gap-0.5 truncate text-primary hover:underline" title="打开这封邮件">
+                <span className="truncate">{i.subject ?? "(无主题)"}</span>
+                <ExternalLink className="size-3 shrink-0 opacity-70" />
               </Link>
             </div>
             {i.summary ? <div className="text-xs text-muted-foreground">{i.summary}</div> : null}

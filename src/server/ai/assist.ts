@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { mailAccounts, messages } from "@/db/schema";
 import { runRole } from "./client";
-import { DRAFT_SYSTEM, messageToPromptText, SUMMARY_SYSTEM } from "./prompts";
+import { COMPOSE_SYSTEM, composeDraftSchema, DRAFT_SYSTEM, messageToPromptText, SUMMARY_SYSTEM } from "./prompts";
 import { triageMessage } from "./triage";
 
 /**
@@ -46,6 +46,38 @@ export async function draftReply(userId: string, messageId: string, instructions
     ],
   });
   return { text: r.text.trim(), model: r.model };
+}
+
+/** 起草一封**新邮件**（撰写框的 AI 起草，draft 等级）：根据用户要求给出主题 + 正文 */
+export async function draftEmail(
+  userId: string,
+  accountId: string,
+  opts: { instructions?: string; to?: string; subject?: string },
+): Promise<{ subject: string; text: string; model: string }> {
+  const db = await getDb();
+  const account = await db.query.mailAccounts.findFirst({ where: and(eq(mailAccounts.id, accountId), eq(mailAccounts.userId, userId)) });
+  if (!account) throw new Error("账号不存在");
+  const user = [
+    opts.to?.trim() ? `收件人：${opts.to.trim()}` : "收件人：（未指定）",
+    opts.subject?.trim() ? `已有主题：${opts.subject.trim()}` : "主题：（请你拟一个）",
+    `我的邮箱：${account.displayName ? `${account.displayName} <${account.email}>` : account.email}`,
+    `我的要求：${opts.instructions?.trim() || "帮我起草一封得体、条理清晰的邮件。"}`,
+  ].join("\n");
+  const r = await runRole<{ subject?: string; body?: string }>({
+    userId,
+    accountId: account.id,
+    role: "draft",
+    maxTokens: 2048,
+    schema: composeDraftSchema,
+    schemaName: "email_draft",
+    messages: [
+      { role: "system", content: COMPOSE_SYSTEM },
+      { role: "user", content: user },
+    ],
+  });
+  const subject = (r.json?.subject ?? opts.subject ?? "").trim();
+  const text = (r.json?.body ?? r.text ?? "").trim();
+  return { subject, text, model: r.model };
 }
 
 /** 立即分析一封邮件（无视账号开关） */

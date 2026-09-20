@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, ChevronRight, Loader2, Pencil, Plus, RefreshCw, Trash2, Unlink } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Loader2, Pencil, Plus, RefreshCw, Trash2, Unlink } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -71,6 +71,9 @@ export function TasksView({
       else next.add(listId);
       return next;
     });
+  // 一键折叠 / 展开所有清单
+  const allCollapsed = lists.length > 0 && lists.every((l) => collapsed.has(l.id));
+  const toggleAll = () => setCollapsed(allCollapsed ? new Set() : new Set(lists.map((l) => l.id)));
 
   const reload = () =>
     start(async () => {
@@ -205,6 +208,11 @@ export function TasksView({
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2">
+          {lists.length > 1 ? (
+            <Button size="sm" variant="outline" onClick={toggleAll} disabled={pending} title={allCollapsed ? "展开所有清单" : "折叠所有清单"}>
+              {allCollapsed ? <ChevronsUpDown className="size-4" /> : <ChevronsDownUp className="size-4" />} {allCollapsed ? "全部展开" : "全部折叠"}
+            </Button>
+          ) : null}
           <Button size="sm" variant="outline" onClick={reload} disabled={pending}>
             {pending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} 刷新
           </Button>

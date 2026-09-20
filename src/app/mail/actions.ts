@@ -96,6 +96,15 @@ export async function aiDraftReplyAction(messageId: string, instructions?: strin
   });
 }
 
+/** 撰写框的 AI 起草：根据要求起草一封新邮件（返回主题 + 正文） */
+export async function aiDraftEmailAction(accountId: string, input: { instructions?: string; to?: string; subject?: string }) {
+  return run(async () => {
+    const user = await requireUser();
+    const { draftEmail } = await import("@/server/ai/assist");
+    return draftEmail(user.id, accountId, input);
+  });
+}
+
 export async function aiAnalyzeAction(messageId: string) {
   return run(async () => {
     const user = await requireUser();
