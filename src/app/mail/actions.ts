@@ -141,6 +141,15 @@ export async function translateMessageAction(messageId: string, lang: string, re
   });
 }
 
+/** 阅读时自动翻译：非中/英文邮件自动译成英文（受 AI 设置开关控制，结果与手动翻译共用缓存） */
+export async function autoTranslateAction(messageId: string) {
+  return run(async () => {
+    const user = await requireUser();
+    const { autoTranslateToEnglish } = await import("@/server/ai/translate");
+    return autoTranslateToEnglish(user.id, messageId);
+  });
+}
+
 export async function semanticSearchAction(q: string, accountId?: string | null) {
   return run(async () => {
     const user = await requireUser();

@@ -42,6 +42,7 @@ export const DEFAULT_SETTINGS: AiSettingsData = {
   writeBack: { gmailLabels: true, imapFolders: false },
   autoTriageScope: "inbox",
   translationLangs: DEFAULT_TRANSLATION_LANGS,
+  autoTranslateEnglish: true,
   dailyDigest: { enabled: false, hour: 8, email: false },
 };
 

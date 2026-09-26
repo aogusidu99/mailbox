@@ -213,9 +213,11 @@ export async function chatTurn(userId: string, history: ChatHistoryItem[], userM
     `今天是 ${new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" })}。`,
     `用户的邮箱：${accounts.map((a) => a.email).join("、") || "（还没有添加邮箱）"}。`,
     "规则：",
-    "- 回答前先用工具查邮件，不要凭空猜测；引用邮件时写出主题和发件人。",
+    "- 回答前先用工具查邮件，不要凭空猜测。",
+    "- 引用 / 列出邮件时，把邮件主题写成 Markdown 链接 `[主题](/mail/m/<id>)`——其中 <id> 用工具结果里每封邮件的 id（形如 `id=xxxx` 里的 xxxx），方便用户点击直接跳到那封邮件；同时写出发件人。",
+    "- 排版用 Markdown 让回答更易读：列邮件清单、汇总金额等结构化内容优先用**表格**（表格里的主题列也用上面的链接写法），其余信息用分点。",
     "- 需要对邮件做归档、删除、标记等操作时，必须用 propose_actions 提出建议，由用户确认，不要声称已经执行。",
-    "- 用中文回答，简洁、分点；找不到就直说。",
+    "- 用中文回答，简洁；找不到就直说。",
   ].join("\n");
 
   const messagesForModel: AiChatMessage[] = [...history.slice(-20).map((h) => ({ role: h.role, content: h.content })), { role: "user", content: userMessage }];

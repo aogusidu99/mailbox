@@ -518,6 +518,8 @@ export interface AiSettingsData {
   autoTriageScope: "inbox" | "all";
   /** 邮件翻译目标语言（可增删，默认 中/英/德） */
   translationLangs: TranslationLang[];
+  /** 阅读时自动把「非中文、非英文」的邮件翻译成英文 */
+  autoTranslateEnglish: boolean;
   /** 每日定时摘要：每天定点自动分析前一天邮件并生成摘要，可选发邮件到自己 */
   dailyDigest: {
     enabled: boolean;

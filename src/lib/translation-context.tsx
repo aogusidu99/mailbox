@@ -3,13 +3,23 @@
 import { createContext, useContext } from "react";
 import type { TranslationLang } from "@/db/schema";
 
-/** 邮件翻译目标语言（来自用户的 AI 设置），供阅读界面的翻译下拉使用。 */
-const TranslationLangsContext = createContext<TranslationLang[]>([]);
+/** 翻译相关配置（来自用户的 AI 设置），供阅读界面用。 */
+interface TranslationConfig {
+  langs: TranslationLang[];
+  /** 阅读时自动把非中/英文邮件译成英文 */
+  autoEnglish: boolean;
+}
 
-export function TranslationLangsProvider({ langs, children }: { langs: TranslationLang[]; children: React.ReactNode }) {
-  return <TranslationLangsContext.Provider value={langs}>{children}</TranslationLangsContext.Provider>;
+const TranslationContext = createContext<TranslationConfig>({ langs: [], autoEnglish: false });
+
+export function TranslationLangsProvider({ langs, autoEnglish, children }: { langs: TranslationLang[]; autoEnglish: boolean; children: React.ReactNode }) {
+  return <TranslationContext.Provider value={{ langs, autoEnglish }}>{children}</TranslationContext.Provider>;
 }
 
 export function useTranslationLangs(): TranslationLang[] {
-  return useContext(TranslationLangsContext);
+  return useContext(TranslationContext).langs;
+}
+
+export function useAutoTranslateEnglish(): boolean {
+  return useContext(TranslationContext).autoEnglish;
 }

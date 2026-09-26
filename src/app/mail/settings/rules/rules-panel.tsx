@@ -12,7 +12,9 @@ import { Textarea } from "@/components/ui/textarea";
 import type { CompiledRule } from "@/db/schema";
 import type { RulePreviewItem } from "@/server/ai/rules";
 import { formatListDate } from "@/lib/format";
-import { compileRuleAction, createRuleAction, deleteRuleAction, runRuleNowAction, toggleRuleAction } from "./actions";
+import { compileRuleAction, compileRulesAction, createRuleAction, createRulesAction, deleteRuleAction, runRuleNowAction, toggleRuleAction } from "./actions";
+
+type BatchDraft = { scanned: number; items: Array<{ naturalText: string; compiled: CompiledRule; matchCount: number }>; errors: Array<{ line: string; error: string }> };
 
 export interface RuleRow {
   id: string;
@@ -69,6 +71,10 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const [accountId, setAccountId] = useState<string>("");
   const [draft, setDraft] = useState<{ compiled: CompiledRule; preview: { scanned: number; matches: RulePreviewItem[] } } | null>(null);
   const [pending, start] = useTransition();
+  // 批量新建（每行一条）
+  const [batchText, setBatchText] = useState("");
+  const [batchAccountId, setBatchAccountId] = useState<string>("");
+  const [batchDraft, setBatchDraft] = useState<BatchDraft | null>(null);
 
   const compile = () =>
     start(async () => {
@@ -91,6 +97,32 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
       toast.success("规则已保存，新邮件到达时自动执行");
       setDraft(null);
       setText("");
+      router.refresh();
+    });
+
+  const compileBatch = () =>
+    start(async () => {
+      const r = await compileRulesAction(batchText);
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      setBatchDraft(r.data);
+    });
+
+  const removeBatchItem = (i: number) => setBatchDraft((d) => (d ? { ...d, items: d.items.filter((_, j) => j !== i) } : d));
+
+  const saveBatch = () =>
+    start(async () => {
+      if (!batchDraft || batchDraft.items.length === 0) return;
+      const r = await createRulesAction({ items: batchDraft.items.map((it) => ({ naturalText: it.naturalText, compiled: it.compiled })), accountId: batchAccountId || null });
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      toast.success(`已保存 ${r.data.created} 条规则`);
+      setBatchDraft(null);
+      setBatchText("");
       router.refresh();
     });
 
@@ -147,6 +179,74 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
                   保存规则
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setDraft(null)} disabled={pending}>
+                  放弃
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>批量新建规则</CardTitle>
+          <CardDescription>每行一条规则（空行、# 开头的注释行会跳过）。一次编译多条、预览命中数后可全部保存。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Textarea
+            aria-label="批量规则（每行一条）"
+            value={batchText}
+            onChange={(e) => setBatchText(e.target.value)}
+            placeholder={"把推广广告(promotion)类邮件移动到 Promotion 文件夹\n把订阅资讯(newsletter)类邮件移动到 Newsletter 文件夹\n把账单发票(billing)类邮件移动到 Finance 文件夹\n把重要且优先级高的邮件加星标\n把待办(todo)类邮件加星标并转给助手"}
+            className="min-h-32 font-mono text-sm"
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <select aria-label="批量适用账号" className="h-8 rounded-lg border border-input bg-background px-2 text-sm" value={batchAccountId} onChange={(e) => setBatchAccountId(e.target.value)}>
+              <option value="">所有邮箱</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.email}
+                </option>
+              ))}
+            </select>
+            <Button onClick={compileBatch} disabled={pending || !batchText.trim()}>
+              {pending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} 用 AI 批量编译并预览
+            </Button>
+          </div>
+
+          {batchDraft ? (
+            <div className="space-y-2 rounded-md border p-3 text-sm">
+              {batchDraft.errors.length ? (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                  {batchDraft.errors.length} 行没编译成功（已跳过）：
+                  <ul className="mt-1 list-disc pl-4">
+                    {batchDraft.errors.map((e, i) => (
+                      <li key={i}>「{e.line}」— {e.error}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              <div className="text-xs text-muted-foreground">在最近 {batchDraft.scanned} 封收件箱邮件里试算：</div>
+              <div className="divide-y rounded-md border">
+                {batchDraft.items.map((it, i) => (
+                  <div key={i} className="flex items-start gap-2 p-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">{it.compiled.name}</div>
+                      <div className="text-xs text-muted-foreground">{describeRule(it.compiled)}</div>
+                      <div className="text-xs text-muted-foreground">命中 {it.matchCount} 封</div>
+                    </div>
+                    <Button size="xs" variant="ghost" onClick={() => removeBatchItem(i)} disabled={pending}>
+                      移除
+                    </Button>
+                  </div>
+                ))}
+                {batchDraft.items.length === 0 ? <div className="p-2 text-xs text-muted-foreground">没有可保存的规则。</div> : null}
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" onClick={saveBatch} disabled={pending || batchDraft.items.length === 0}>
+                  全部保存（{batchDraft.items.length}）
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setBatchDraft(null)} disabled={pending}>
                   放弃
                 </Button>
               </div>

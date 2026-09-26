@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { CompiledRule } from "@/db/schema";
-import { compileRule, compiledRuleSchema, createRule, deleteRule, listRules, normalizeCompiled, previewRule, runRuleNow, updateRule } from "@/server/ai/rules";
+import { compileRule, compiledRuleSchema, compileRules, createRule, createRules, deleteRule, listRules, normalizeCompiled, previewRule, previewRules, runRuleNow, updateRule } from "@/server/ai/rules";
 import { requireUser } from "@/server/auth/session";
 
 type ActionResult<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
@@ -43,6 +43,33 @@ export async function createRuleAction(input: { naturalText: string; compiled: u
     const rule = await createRule(user.id, { naturalText: input.naturalText, compiled: normalize(input.compiled), accountId: input.accountId ?? null });
     revalidatePath("/mail/settings/rules");
     return { id: rule.id };
+  });
+}
+
+/** 批量编译：每行一条 → 逐行编译 + 一次性试算命中数 */
+export async function compileRulesAction(text: string) {
+  return run(async () => {
+    const user = await requireUser();
+    const t = text.trim();
+    if (!t) throw new Error("请粘贴规则（每行一条）");
+    const { items, errors } = await compileRules(user.id, t);
+    const preview = await previewRules(user.id, items.map((it) => it.compiled));
+    return {
+      scanned: preview.scanned,
+      items: items.map((it, i) => ({ naturalText: it.naturalText, compiled: it.compiled, matchCount: preview.counts[i] ?? 0 })),
+      errors,
+    };
+  });
+}
+
+/** 批量保存规则 */
+export async function createRulesAction(input: { items: Array<{ naturalText: string; compiled: unknown }>; accountId?: string | null }) {
+  return run(async () => {
+    const user = await requireUser();
+    const items = input.items.map((it) => ({ naturalText: it.naturalText, compiled: normalize(it.compiled) }));
+    const created = await createRules(user.id, items, input.accountId ?? null);
+    revalidatePath("/mail/settings/rules");
+    return { created };
   });
 }
 

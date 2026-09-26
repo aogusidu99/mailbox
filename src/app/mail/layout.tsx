@@ -35,7 +35,9 @@ export default async function MailLayout({ children }: LayoutProps<"/mail">) {
         </div>
         {/* 内容区自己滚动：邮件工作区内部用 h-full，设置类长页面在这里滚动 */}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <TranslationLangsProvider langs={aiSettings.data.translationLangs}>{children}</TranslationLangsProvider>
+          <TranslationLangsProvider langs={aiSettings.data.translationLangs} autoEnglish={aiSettings.data.autoTranslateEnglish}>
+            {children}
+          </TranslationLangsProvider>
         </div>
       </div>
     </div>

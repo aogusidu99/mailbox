@@ -2,9 +2,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Check, Download, ImageOff, Languages, Loader2, MailX, Paperclip, RefreshCw } from "lucide-react";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { translateMessageAction, unsubscribeAction } from "@/app/mail/actions";
+import { autoTranslateAction, translateMessageAction, unsubscribeAction } from "@/app/mail/actions";
 import { EmailFrame } from "@/components/mail/email-frame";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -13,7 +13,7 @@ import type { MessageDetail } from "@/lib/api-types";
 import { addressDisplayName, colorFor, formatAddressList, formatBytes, formatFullDate, initialsOf } from "@/lib/format";
 import { fmt } from "@/lib/i18n";
 import { useLocale, useT } from "@/lib/locale-context";
-import { useTranslationLangs } from "@/lib/translation-context";
+import { useAutoTranslateEnglish, useTranslationLangs } from "@/lib/translation-context";
 import { categoryLabel } from "./message-list";
 
 interface Translation {
@@ -22,6 +22,8 @@ interface Translation {
   subject: string | null;
   body: string;
   model: string | null;
+  /** true = 阅读时自动译（非中/英文邮件），非用户手动点的 */
+  auto?: boolean;
 }
 
 export function MessageView({
@@ -37,10 +39,13 @@ export function MessageView({
   const t = useT();
   const locale = useLocale();
   const langs = useTranslationLangs();
+  const autoEnglish = useAutoTranslateEnglish();
   const [remote, setRemote] = useState(false);
   const [unsubPending, startUnsub] = useTransition();
   const [translation, setTranslation] = useState<Translation | null>(null);
   const [translating, startTranslate] = useTransition();
+  // 记录已对哪封邮件尝试过自动翻译，避免重复请求（用 ref，不触发额外渲染）
+  const autoTriedRef = useRef<string | null>(null);
 
   const translate = (lang: { code: string; label: string }, refresh = false) =>
     startTranslate(async () => {
@@ -74,6 +79,20 @@ export function MessageView({
       return m;
     },
   });
+
+  // 阅读时自动翻译：邮件加载后，若开启且是非中/英文邮件，自动译成英文（每封只尝试一次）
+  useEffect(() => {
+    if (!autoEnglish || !query.data || autoTriedRef.current === messageId) return;
+    autoTriedRef.current = messageId;
+    startTranslate(async () => {
+      const r = await autoTranslateAction(messageId);
+      if (r.ok && r.data.translated && r.data.result) {
+        const en = langs.find((l) => l.code === "en");
+        setTranslation({ lang: "en", label: en?.label ?? "English", subject: r.data.result.subject, body: r.data.result.body, model: r.data.result.model, auto: true });
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoEnglish, query.data, messageId]);
 
   if (query.isLoading) {
     return (
@@ -179,7 +198,7 @@ export function MessageView({
         {translation ? (
           <div className="space-y-2 px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
-              <span>{fmt(t.view.translatedBy, { lang: translation.label, model: translation.model ?? "" })}</span>
+              <span>{translation.auto ? fmt(t.view.autoTranslated, { model: translation.model ?? "" }) : fmt(t.view.translatedBy, { lang: translation.label, model: translation.model ?? "" })}</span>
               <span className="flex items-center gap-3">
                 <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => translate({ code: translation.lang, label: translation.label }, true)} disabled={translating}>
                   <RefreshCw className={translating ? "size-3 animate-spin" : "size-3"} /> {t.view.retranslate}

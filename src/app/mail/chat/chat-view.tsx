@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { archiveAction, flagAction, junkAction, labelAction, markReadAction, trashAction } from "@/app/mail/actions";
+import { ChatMarkdown } from "@/components/mail/chat-markdown";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
@@ -156,7 +157,7 @@ export function ChatView({ threads, threadId, initialTurns }: { threads: ThreadS
             <div key={i} className={cn("flex gap-2", t.role === "user" ? "justify-end" : "justify-start")}>
               {t.role === "assistant" ? <Bot className="mt-1 size-4 shrink-0 text-muted-foreground" /> : null}
               <div className={cn("max-w-[85%] space-y-2 rounded-lg px-3 py-2 text-sm", t.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted")}>
-                <div className="whitespace-pre-wrap">{t.content}</div>
+                {t.role === "assistant" ? <ChatMarkdown content={t.content} /> : <div className="whitespace-pre-wrap">{t.content}</div>}
                 {t.proposals?.length ? (
                   <div className="space-y-1 rounded-md border bg-background p-2">
                     <div className="text-xs font-medium">操作建议（需要你确认）</div>

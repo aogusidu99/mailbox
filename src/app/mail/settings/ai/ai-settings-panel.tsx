@@ -483,6 +483,11 @@ export function AiSettingsPanel({
           <CardDescription>在读信界面点「翻译」时可选择的目标语言（用 BCP-47 代码，如 zh-CN / en / de / ja / fr）。翻译用「邮件翻译」等级的模型，结果会缓存。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
+          <label className="flex items-center justify-between gap-4">
+            <span>阅读时自动把「非中文、非英文」的邮件译成英文</span>
+            <Switch checked={view.data.autoTranslateEnglish} disabled={pending} onCheckedChange={(v) => apply(saveBehaviorAction({ autoTranslateEnglish: Boolean(v) }))} />
+          </label>
+          <p className="text-xs text-muted-foreground">打开某封外语邮件时自动检测语言，若不是中文也不是英文就自动译成英文显示（可随时切回原文；结果缓存，只在首次翻译时付费）。</p>
           <div className="flex flex-wrap gap-1.5">
             {translationLangs.map((l) => (
               <span key={l.code} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-sm">

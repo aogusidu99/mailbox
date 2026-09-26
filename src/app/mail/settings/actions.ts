@@ -156,12 +156,17 @@ export async function removeCustomProviderAction(id: string) {
   });
 }
 
-export async function saveBehaviorAction(patch: Partial<Pick<AiSettingsData, "writeBack" | "autoTriageScope">>) {
+export async function saveBehaviorAction(patch: Partial<Pick<AiSettingsData, "writeBack" | "autoTriageScope" | "autoTranslateEnglish">>) {
   return run(async () => {
     const user = await requireUser();
     await saveAiSettings(user.id, (s) => ({
       ...s,
-      data: { ...s.data, ...(patch.autoTriageScope ? { autoTriageScope: patch.autoTriageScope } : {}), writeBack: { ...s.data.writeBack, ...(patch.writeBack ?? {}) } },
+      data: {
+        ...s.data,
+        ...(patch.autoTriageScope ? { autoTriageScope: patch.autoTriageScope } : {}),
+        ...(patch.autoTranslateEnglish !== undefined ? { autoTranslateEnglish: patch.autoTranslateEnglish } : {}),
+        writeBack: { ...s.data.writeBack, ...(patch.writeBack ?? {}) },
+      },
     }));
     return view(user.id);
   });

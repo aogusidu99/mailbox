@@ -88,6 +88,29 @@ export async function compileRule(userId: string, naturalText: string): Promise<
   return normalizeCompiled(r.json);
 }
 
+export interface BatchCompileResult {
+  items: Array<{ naturalText: string; compiled: CompiledRule }>;
+  errors: Array<{ line: string; error: string }>;
+}
+
+/** 批量编译：每行一条规则（空行、# / // 开头的注释行跳过），逐行编译，失败的单独收集不影响其它。 */
+export async function compileRules(userId: string, text: string): Promise<BatchCompileResult> {
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#") && !l.startsWith("//"));
+  if (lines.length === 0) throw new Error("请每行写一条规则");
+  if (lines.length > 30) throw new Error("一次最多 30 条，请分批粘贴");
+  const settled = await Promise.allSettled(lines.map((l) => compileRule(userId, l)));
+  const items: BatchCompileResult["items"] = [];
+  const errors: BatchCompileResult["errors"] = [];
+  settled.forEach((res, i) => {
+    if (res.status === "fulfilled") items.push({ naturalText: lines[i], compiled: res.value });
+    else errors.push({ line: lines[i], error: res.reason instanceof Error ? res.reason.message : String(res.reason) });
+  });
+  return { items, errors };
+}
+
 export interface RuleContext {
   from: string;
   to: string;
@@ -276,6 +299,27 @@ export async function previewRule(userId: string, compiled: CompiledRule, limit 
   return { scanned: rows.length, matches };
 }
 
+/** 一次拉取最近收件箱邮件，对多条规则各自统计命中数（批量预览用，避免逐条重复扫描） */
+export async function previewRules(userId: string, list: CompiledRule[], limit = 300): Promise<{ scanned: number; counts: number[] }> {
+  const db = await getDb();
+  if (list.length === 0) return { scanned: 0, counts: [] };
+  const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
+  const inboxes = accounts.length
+    ? await db.query.folders.findMany({ where: and(inArray(folders.accountId, accounts.map((a) => a.id)), eq(folders.role, "inbox")) })
+    : [];
+  if (inboxes.length === 0) return { scanned: 0, counts: list.map(() => 0) };
+  const rows = await db
+    .select({ message: messages, ai: aiAnnotations })
+    .from(messages)
+    .leftJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
+    .where(inArray(messages.folderId, inboxes.map((f) => f.id)))
+    .orderBy(desc(messages.date))
+    .limit(limit);
+  const ctxs = rows.map(({ message, ai }) => messageContext(message, ai));
+  const counts = list.map((rule) => ctxs.filter((ctx) => evaluateRule(rule, ctx)).length);
+  return { scanned: rows.length, counts };
+}
+
 /** 对已有邮件立即执行某条规则 */
 export async function runRuleNow(userId: string, ruleId: string, limit = 300): Promise<number> {
   const db = await getDb();
@@ -306,6 +350,14 @@ export async function createRule(userId: string, input: { naturalText: string; c
     .values({ userId, accountId: input.accountId ?? null, name: input.compiled.name, naturalText: input.naturalText, compiled: input.compiled })
     .returning();
   return row;
+}
+
+/** 批量创建规则（批量导入用） */
+export async function createRules(userId: string, items: Array<{ naturalText: string; compiled: CompiledRule }>, accountId?: string | null): Promise<number> {
+  if (items.length === 0) return 0;
+  const db = await getDb();
+  await db.insert(rules).values(items.map((it) => ({ userId, accountId: accountId ?? null, name: it.compiled.name, naturalText: it.naturalText, compiled: it.compiled })));
+  return items.length;
 }
 
 export async function updateRule(userId: string, ruleId: string, patch: { enabled?: boolean; name?: string; compiled?: CompiledRule }): Promise<void> {
