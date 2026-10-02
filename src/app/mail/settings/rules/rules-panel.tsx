@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { CompiledRule } from "@/db/schema";
 import type { RulePreviewItem } from "@/server/ai/rules";
 import { formatListDate } from "@/lib/format";
-import { compileRuleAction, compileRulesAction, createRuleAction, createRulesAction, deleteRuleAction, runRuleNowAction, toggleRuleAction } from "./actions";
+import { compileRuleAction, compileRulesAction, createRuleAction, createRulesAction, deleteRuleAction, runAllRulesAction, runRuleNowAction, toggleRuleAction } from "./actions";
 
 type BatchDraft = { scanned: number; items: Array<{ naturalText: string; compiled: CompiledRule; matchCount: number }>; errors: Array<{ line: string; error: string }> };
 
@@ -272,9 +272,28 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle>已有规则（{initialRules.length}）</CardTitle>
-          <CardDescription>按创建顺序依次匹配；「立即执行」会对最近 300 封收件箱邮件应用该规则。</CardDescription>
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
+          <div>
+            <CardTitle>已有规则（{initialRules.length}）</CardTitle>
+            <CardDescription>按创建顺序依次匹配；「立即执行」会对最近 300 封收件箱邮件应用该规则。</CardDescription>
+          </div>
+          {initialRules.length ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={pending}
+              onClick={() => {
+                if (!confirm("对每个账号最近 300 封收件箱邮件跑一遍所有启用的规则？移动 / 归档 / 删除等会立即执行。")) return;
+                act(async () => {
+                  const res = await runAllRulesAction();
+                  if (res.ok) toast.success(`扫描 ${res.data.scanned} 封，命中执行 ${res.data.applied} 次`);
+                  return res;
+                });
+              }}
+            >
+              {pending ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />} 全部立即执行
+            </Button>
+          ) : null}
         </CardHeader>
         <CardContent className="divide-y">
           {initialRules.length === 0 ? <p className="py-3 text-sm text-muted-foreground">还没有规则。</p> : null}

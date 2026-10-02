@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { CompiledRule } from "@/db/schema";
-import { compileRule, compiledRuleSchema, compileRules, createRule, createRules, deleteRule, listRules, normalizeCompiled, previewRule, previewRules, runRuleNow, updateRule } from "@/server/ai/rules";
+import { compileRule, compiledRuleSchema, compileRules, createRule, createRules, deleteRule, listRules, normalizeCompiled, previewRule, previewRules, runAllRules, runRuleNow, updateRule } from "@/server/ai/rules";
 import { requireUser } from "@/server/auth/session";
 
 type ActionResult<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
@@ -95,6 +95,16 @@ export async function runRuleNowAction(ruleId: string) {
     const n = await runRuleNow(user.id, ruleId);
     revalidatePath("/mail/settings/rules");
     return { applied: n };
+  });
+}
+
+/** 一键把所有启用的规则跑一遍存量邮件 */
+export async function runAllRulesAction() {
+  return run(async () => {
+    const user = await requireUser();
+    const r = await runAllRules(user.id);
+    revalidatePath("/mail/settings/rules");
+    return r;
   });
 }
 

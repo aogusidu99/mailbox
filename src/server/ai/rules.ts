@@ -370,6 +370,27 @@ export async function runRuleNow(userId: string, ruleId: string, limit = 300): P
   return preview.matches.length;
 }
 
+/** 一键把**所有启用的规则**跑一遍存量邮件（每个账号最近 limit 封收件箱，按新邮件同样的逻辑逐封处理） */
+export async function runAllRules(userId: string, limit = 300): Promise<{ scanned: number; applied: number }> {
+  const db = await getDb();
+  const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
+  if (accounts.length === 0) return { scanned: 0, applied: 0 };
+  const inboxes = await db.query.folders.findMany({ where: and(inArray(folders.accountId, accounts.map((a) => a.id)), eq(folders.role, "inbox")) });
+  if (inboxes.length === 0) return { scanned: 0, applied: 0 };
+  const rows = await db
+    .select({ id: messages.id, accountId: messages.accountId })
+    .from(messages)
+    .where(inArray(messages.folderId, inboxes.map((f) => f.id)))
+    .orderBy(desc(messages.date))
+    .limit(limit);
+  let applied = 0;
+  for (const m of rows) {
+    const hits = await applyRulesToMessage(m.accountId, m.id).catch(() => [] as string[]);
+    applied += hits.length;
+  }
+  return { scanned: rows.length, applied };
+}
+
 export async function listRules(userId: string): Promise<Rule[]> {
   const db = await getDb();
   return db.query.rules.findMany({ where: eq(rules.userId, userId), orderBy: [asc(rules.createdAt)] });
