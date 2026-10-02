@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2, Paperclip, Send, Sparkles, X } from "lucide-react";
-import { useRef, useState, useTransition } from "react";
+import { type ClipboardEvent, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { aiDraftEmailAction, renderComposePreviewAction, saveDraftAction, sendMailAction } from "@/app/mail/actions";
 import { cn } from "cn";
@@ -82,7 +82,7 @@ export function ComposeDialog({
     draftMessageId: initial?.draftMessageId,
   });
 
-  const upload = async (files: FileList | null) => {
+  const upload = async (files: ArrayLike<File> | null) => {
     if (!files || files.length === 0) return;
     setUploading(true);
     try {
@@ -100,6 +100,23 @@ export function ComposeDialog({
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
     }
+  };
+
+  // 粘贴图片（截图 / 复制的图片）→ 直接当附件上传，不用先存成文件
+  const onPasteImages = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imgs = Array.from(e.clipboardData?.items ?? [])
+      .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f !== null)
+      // 截图粘贴通常都叫 image.png（会重名），统一改成带时间戳的唯一文件名
+      .map((f, i) => {
+        const ext = (f.type.split("/")[1] || "png").replace("+xml", "");
+        const named = f.name && f.name !== "image.png" ? f.name : `pasted-${Date.now()}-${i + 1}.${ext}`;
+        return new File([f], named, { type: f.type });
+      });
+    if (imgs.length === 0) return; // 不是图片就走默认粘贴（文字进正文）
+    e.preventDefault();
+    void upload(imgs);
   };
 
   const send = () =>
@@ -224,7 +241,7 @@ export function ComposeDialog({
               <Sparkles className="size-3.5" /> AI 起草
             </button>
           ) : null}
-          <span className="hidden sm:inline">支持 Markdown：**粗体**、- 列表、[链接](网址)、# 标题</span>
+          <span className="hidden sm:inline">支持 Markdown（**粗体**、- 列表、[链接](网址)）；图片可直接粘贴为附件</span>
           <div className="ml-auto inline-flex overflow-hidden rounded-md border">
             <button type="button" onClick={() => setMode("edit")} className={cn("px-2 py-0.5", mode === "edit" ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>
               编辑
@@ -249,7 +266,7 @@ export function ComposeDialog({
             )}
           </div>
         ) : (
-          <Textarea aria-label={t.body} value={text} onChange={(e) => setText(e.target.value)} className="min-h-[240px] flex-1 resize-y font-sans text-sm" placeholder={t.bodyPlaceholder} />
+          <Textarea aria-label={t.body} value={text} onChange={(e) => setText(e.target.value)} onPaste={onPasteImages} className="min-h-[240px] flex-1 resize-y font-sans text-sm" placeholder={t.bodyPlaceholder} />
         )}
 
         {initial?.originalAttachmentNames?.length ? (
