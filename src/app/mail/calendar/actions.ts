@@ -3,7 +3,7 @@
 import { requireUser } from "@/server/auth/session";
 import { createEvent, deleteEvent, listEvents, updateEvent, type CalEventInput } from "@/server/google/calendar";
 import { disconnectGoogle } from "@/server/google/connection";
-import { addEventsToCalendar, proposeCalendarEvents } from "@/server/google/extract-events";
+import { addEventsToCalendar, listCandidateMessages, proposeCalendarEvents, proposeCalendarEventsFromMessages } from "@/server/google/extract-events";
 
 type ActionResult<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -52,6 +52,23 @@ export async function proposeEventsAction(days: number) {
   return run(async () => {
     const user = await requireUser();
     return proposeCalendarEvents(user.id, { days });
+  });
+}
+
+/** AI 从**指定邮件**抽取日程（用完整正文，更准） */
+export async function proposeEventsFromMessagesAction(messageIds: string[]) {
+  return run(async () => {
+    const user = await requireUser();
+    if (messageIds.length === 0) throw new Error("请先选择邮件");
+    return proposeCalendarEventsFromMessages(user.id, messageIds);
+  });
+}
+
+/** 日历页「选择邮件」用：按主题 / 发件人搜索邮件清单 */
+export async function listMessagesForExtractAction(query: string, limit = 30) {
+  return run(async () => {
+    const user = await requireUser();
+    return { messages: await listCandidateMessages(user.id, { query, limit }) };
   });
 }
 

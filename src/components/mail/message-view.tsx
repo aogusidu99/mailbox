@@ -1,11 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Check, Download, ImageOff, Languages, Loader2, MailX, Paperclip, RefreshCw } from "lucide-react";
+import { CalendarPlus, Check, Download, ImageOff, Languages, Loader2, MailX, Paperclip, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { autoTranslateAction, translateMessageAction, unsubscribeAction } from "@/app/mail/actions";
 import { EmailFrame } from "@/components/mail/email-frame";
+import { ExtractEventsDialog } from "@/components/mail/extract-events-dialog";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api } from "@/lib/api-client";
@@ -44,6 +45,7 @@ export function MessageView({
   const [unsubPending, startUnsub] = useTransition();
   const [translation, setTranslation] = useState<Translation | null>(null);
   const [translating, startTranslate] = useTransition();
+  const [extractOpen, setExtractOpen] = useState(false);
   // 记录已对哪封邮件尝试过自动翻译，避免重复请求（用 ref，不触发额外渲染）
   const autoTriedRef = useRef<string | null>(null);
 
@@ -134,6 +136,9 @@ export function MessageView({
               <div className="text-xs text-muted-foreground">{formatFullDate(m.date)}</div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
+              <Button size="xs" variant="outline" onClick={() => setExtractOpen(true)} title="从这封邮件提取日程加入日历">
+                <CalendarPlus className="size-3" /> 日程
+              </Button>
               {langs.length ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger
@@ -239,6 +244,7 @@ export function MessageView({
           </div>
         ) : null}
       </div>
+      <ExtractEventsDialog open={extractOpen} onOpenChange={setExtractOpen} messageId={messageId} />
     </div>
   );
 }

@@ -9,11 +9,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { CalEvent, CalEventInput, CalendarMeta } from "@/server/google/calendar";
-import type { EventCandidate } from "@/server/google/extract-events";
+import type { EventCandidate, PickMessage } from "@/server/google/extract-events";
 import type { TaskList, TaskWithList } from "@/server/google/tasks";
 import { cn } from "cn";
 import { TasksView } from "../tasks/tasks-view";
-import { addEventsAction, createEventAction, deleteEventAction, disconnectGoogleAction, proposeEventsAction, refreshEventsAction, updateEventAction } from "./actions";
+import { addEventsAction, createEventAction, deleteEventAction, disconnectGoogleAction, listMessagesForExtractAction, proposeEventsAction, proposeEventsFromMessagesAction, refreshEventsAction, updateEventAction } from "./actions";
 
 interface Draft {
   id: string | null;
@@ -197,6 +197,12 @@ export function CalendarWorkspace({
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const [showAi, setShowAi] = useState(false);
   const [aiPending, startAi] = useTransition();
+  // 提取来源：近 N 天自动挑 / 手动选邮件
+  const [extractMode, setExtractMode] = useState<"days" | "pick">("days");
+  const [pickQuery, setPickQuery] = useState("");
+  const [pickList, setPickList] = useState<PickMessage[]>([]);
+  const [pickSel, setPickSel] = useState<Set<string>>(new Set());
+  const [pickPending, startPick] = useTransition();
 
   const monthKey = `${cursor.getFullYear()}-${cursor.getMonth()}`;
   const refreshCurrent = async () => {
@@ -271,6 +277,30 @@ export function CalendarWorkspace({
       setCandidates(null);
       setShowAi(false);
       await refreshCurrent();
+    });
+
+  // 选择邮件：搜索清单 / 勾选 / 从选中邮件抽取（用完整正文，更准）
+  const searchPick = () =>
+    startPick(async () => {
+      const r = await listMessagesForExtractAction(pickQuery, 30);
+      if (r.ok) setPickList(r.data.messages);
+      else toast.error(r.error);
+    });
+  const togglePick = (id: string) =>
+    setPickSel((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const proposeFromPicked = () =>
+    startAi(async () => {
+      if (pickSel.size === 0) return void toast.error("请先勾选要分析的邮件");
+      const r = await proposeEventsFromMessagesAction([...pickSel]);
+      if (!r.ok) return void toast.error(r.error);
+      setCandidates(r.data.candidates);
+      setPicked(new Set(r.data.candidates.map((_, i) => i)));
+      toast.success(r.data.candidates.length ? `AI 找到 ${r.data.candidates.length} 个候选日程` : "选中的邮件里没有找到明确的日程");
     });
 
   // 带截止日的任务 → 合成的「任务」日历事件（全天，只读），叠加到日历
@@ -461,11 +491,23 @@ export function CalendarWorkspace({
           {/* AI 提取 */}
           {showAi ? (
             <Card className="mb-3">
-              <CardHeader className="flex flex-row items-center justify-between gap-2">
-                <CardTitle className="text-base">AI 从邮件提取日程</CardTitle>
+              <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <CardTitle className="text-base">AI 从邮件提取日程</CardTitle>
+                  <div className="inline-flex overflow-hidden rounded-md border text-xs">
+                    <button type="button" onClick={() => setExtractMode("days")} className={cn("px-2 py-1", extractMode === "days" ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>近期</button>
+                    <button type="button" onClick={() => { setExtractMode("pick"); if (pickList.length === 0) searchPick(); }} className={cn("px-2 py-1", extractMode === "pick" ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>选择邮件</button>
+                  </div>
+                </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  近<input type="number" min={1} max={90} value={days} onChange={(e) => setDays(Math.min(90, Math.max(1, Number(e.target.value) || 14)))} className="h-7 w-14 rounded-md border border-input bg-background px-1.5 text-center" />天
-                  <Button size="sm" onClick={propose} disabled={aiPending}>{aiPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} 提取</Button>
+                  {extractMode === "days" ? (
+                    <>
+                      近<input type="number" min={1} max={90} value={days} onChange={(e) => setDays(Math.min(90, Math.max(1, Number(e.target.value) || 14)))} className="h-7 w-14 rounded-md border border-input bg-background px-1.5 text-center" />天
+                      <Button size="sm" onClick={propose} disabled={aiPending}>{aiPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} 提取</Button>
+                    </>
+                  ) : (
+                    <Button size="sm" onClick={proposeFromPicked} disabled={aiPending || pickSel.size === 0}>{aiPending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} 提取选中（{pickSel.size}）</Button>
+                  )}
                   <Button size="xs" variant="ghost" onClick={() => { setShowAi(false); setCandidates(null); }}><X className="size-3" /></Button>
                 </div>
               </CardHeader>
@@ -493,8 +535,33 @@ export function CalendarWorkspace({
                     </>
                   )}
                 </CardContent>
+              ) : extractMode === "pick" ? (
+                <CardContent className="space-y-2 text-sm">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input value={pickQuery} onChange={(e) => setPickQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") searchPick(); }} placeholder="搜索主题 / 发件人…" className="h-8 pl-7" />
+                  </div>
+                  <div className="max-h-64 divide-y overflow-auto rounded-md border">
+                    {pickPending ? (
+                      <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" /> 加载中…</div>
+                    ) : pickList.length === 0 ? (
+                      <div className="px-3 py-3 text-xs text-muted-foreground">没有邮件；换个关键词试试。</div>
+                    ) : (
+                      pickList.map((m) => (
+                        <label key={m.id} className="flex cursor-pointer items-start gap-2 px-3 py-2">
+                          <input type="checkbox" className="mt-0.5" checked={pickSel.has(m.id)} onChange={() => togglePick(m.id)} />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate font-medium">{m.subject ?? "(无主题)"}</div>
+                            <div className="truncate text-xs text-muted-foreground">{m.from}{m.date ? ` · ${m.date.slice(0, 10)}` : ""}</div>
+                          </div>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground">勾选要分析的邮件（最多 20 封），点右上「提取选中」。</div>
+                </CardContent>
               ) : (
-                <CardContent className="text-sm text-muted-foreground">点「提取」，AI 会分析近期邮件，找出会议、预约等带时间的日程供你确认加入日历。</CardContent>
+                <CardContent className="text-sm text-muted-foreground">点「提取」，AI 会分析近期邮件，找出会议、预约等带时间的日程供你确认加入日历。或切到「选择邮件」精准挑选。</CardContent>
               )}
             </Card>
           ) : null}
