@@ -126,6 +126,19 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
       router.refresh();
     });
 
+  // 只重试「没编译成功」的那几行，结果并入当前草稿——不用重跑整批
+  const retryFailed = () =>
+    start(async () => {
+      if (!batchDraft || batchDraft.errors.length === 0) return;
+      const r = await compileRulesAction(batchDraft.errors.map((e) => e.line).join("\n"));
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      setBatchDraft((d) => (d ? { scanned: r.data.scanned || d.scanned, items: [...d.items, ...r.data.items], errors: r.data.errors } : r.data));
+      if (r.data.items.length) toast.success(`又成功 ${r.data.items.length} 条`);
+    });
+
   const act = (fn: () => Promise<{ ok: boolean; error?: string }>, success?: string) =>
     start(async () => {
       const r = await fn();
@@ -224,6 +237,9 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
                       <li key={i}>「{e.line}」— {e.error}</li>
                     ))}
                   </ul>
+                  <Button size="xs" variant="outline" onClick={retryFailed} disabled={pending} className="mt-2">
+                    {pending ? <Loader2 className="size-3.5 animate-spin" /> : null} 重试这 {batchDraft.errors.length} 行
+                  </Button>
                 </div>
               ) : null}
               <div className="text-xs text-muted-foreground">在最近 {batchDraft.scanned} 封收件箱邮件里试算：</div>

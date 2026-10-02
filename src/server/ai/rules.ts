@@ -40,25 +40,42 @@ const RULE_FIELDS = new Set<RuleCondition["field"]>(["from", "to", "subject", "b
 const RULE_OPS = new Set<RuleCondition["op"]>(["contains", "not_contains", "equals", "starts_with", "ends_with", "matches", "is_true", "is_false"]);
 const RULE_ACTIONS = new Set<RuleAction["type"]>(["archive", "trash", "mark_read", "mark_unread", "flag", "junk", "move", "label", "assistant"]);
 
+// AI 有时用同义词 / 中文名，先归一到白名单再校验，避免把合法意图当成非法过滤掉（导致「没识别到动作/条件」）
+const ACTION_ALIASES: Record<string, RuleAction["type"]> = {
+  star: "flag", starred: "flag", 标星: "flag", 星标: "flag", 加星标: "flag",
+  move_to: "move", moveto: "move", 移动: "move", 归档: "archive", 删除: "trash", delete: "trash",
+  read: "mark_read", 已读: "mark_read", unread: "mark_unread", 未读: "mark_unread",
+  spam: "junk", 垃圾: "junk", 垃圾邮件: "junk", tag: "label", 标签: "label", 助手: "assistant",
+};
+const FIELD_ALIASES: Record<string, RuleCondition["field"]> = {
+  分类: "category", 类别: "category", category_label: "category", 优先级: "priority",
+  发件人: "from", sender: "from", 收件人: "to", 主题: "subject", title: "subject", 正文: "body", 附件: "hasAttachment",
+};
+
 export const RULES_SYSTEM = `你是邮件规则编译器。把用户用自然语言描述的邮件处理规则，转换成结构化 JSON 规则。
 
 可用字段（field）：from（发件人名字+地址）、to（收件人）、subject（主题）、body（正文摘要）、category（AI 分类：important/todo/notification/billing/newsletter/promotion/social/personal/other）、priority（AI 优先级：high/normal/low）、hasAttachment（是否有附件）、needsReply（AI 判断是否需要回复）、listId（邮件列表 ID，订阅类邮件常有）。
 可用操作符（op）：contains / not_contains / equals / starts_with / ends_with / matches（正则）/ is_true / is_false（布尔字段用后两者，value 填 null）。
 可用动作（type）：archive（归档）、trash（删除到已删除）、mark_read、mark_unread、flag（星标）、junk（垃圾邮件）、move（移动到文件夹，value 填文件夹名）、label（打 Gmail 标签，value 填标签名）、assistant（转给 AI 助手：把邮件归入「Assistant」标签/文件夹供助手读取，无需 value；用户说「转给助手 / 交给助理 / 让助手处理 / 同步给 assistant」时用它）。
 规则：
-- 文本匹配不区分大小写；
-- match 为 all 表示全部条件都满足，any 表示任一满足；
-- 用户说「发票 / 账单」这类语义类别时，优先用 category 字段（billing 等），同时可以加 subject contains 作为补充（此时 match 用 any）；
+- **每条规则必须同时输出非空的 conditions（针对哪些邮件）和 actions（做什么），两者缺一不可。**
+- 动作词对应：加星标 / 标星 / 星标 → flag；归档 → archive；删除 → trash；标为已读 → mark_read；标为未读 → mark_unread；标为垃圾 → junk；移动到「X」→ move（value=X）；打标签「X」→ label（value=X）；转给助手 / 交给助理 → assistant。
+- 「X 类」「X 类邮件」（X ∈ important/todo/notification/billing/newsletter/promotion/social/personal）一律写成 category equals X 条件——**即使动作里的文件夹名与类别同名（如把 promotion 类移到 Promotion 文件夹），也必须写出这个 category 条件**。
+- 「重要」→ category equals important；「优先级高 / 紧急」→ priority equals high；两个条件可同时用（match=all）。
+- 文本匹配不区分大小写；match 为 all 表示全部条件满足，any 表示任一满足。
+- 用户说「发票 / 账单」等语义类别时，优先用 category 字段（billing 等），可再加 subject contains 作补充（此时 match=any）。
 - name 用不超过 20 字的中文概括；stopProcessing 默认 false。`;
 
 export type CompiledRuleInput = z.infer<typeof compiledRuleSchema>;
 
 export function normalizeCompiled(input: CompiledRuleInput): CompiledRule {
   const conditions = input.conditions
+    .map((c) => ({ ...c, field: FIELD_ALIASES[c.field] ?? c.field }))
     .filter((c) => RULE_FIELDS.has(c.field as RuleCondition["field"]) && RULE_OPS.has(c.op as RuleCondition["op"]))
     .map((c) => ({ field: c.field as RuleCondition["field"], op: c.op as RuleCondition["op"], value: c.value ?? undefined }))
     .slice(0, 8);
   const actions = input.actions
+    .map((a) => ({ ...a, type: ACTION_ALIASES[a.type] ?? a.type }))
     .filter((a) => RULE_ACTIONS.has(a.type as RuleAction["type"]))
     .map((a) => ({ type: a.type as RuleAction["type"], value: a.value ?? undefined }))
     .slice(0, 5);
@@ -71,21 +88,36 @@ export function normalizeCompiled(input: CompiledRuleInput): CompiledRule {
   return { name: input.name || "规则", match: input.match, conditions, actions, stopProcessing: input.stopProcessing ?? false };
 }
 
-/** 自然语言 → 结构化规则 */
+/** 自然语言 → 结构化规则（模型是随机的，缺条件/动作时带纠正提示最多重试到 3 次） */
 export async function compileRule(userId: string, naturalText: string): Promise<CompiledRule> {
-  const r = await runRole<CompiledRuleInput>({
-    userId,
-    role: "rules",
-    schema: compiledRuleSchema,
-    schemaName: "rule",
-    maxTokens: 1024,
-    messages: [
-      { role: "system", content: RULES_SYSTEM },
-      { role: "user", content: naturalText },
-    ],
-  });
-  if (!r.json) throw new Error("AI 没有返回规则");
-  return normalizeCompiled(r.json);
+  let lastErr: unknown = new Error("规则编译失败");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const nudge =
+      attempt === 0
+        ? ""
+        : "\n\n注意：上次没有给出有效的 conditions 或 actions。请确保 conditions（针对哪些邮件，如 category equals promotion）和 actions（做什么，如 move value=Promotion / flag）都非空。";
+    const r = await runRole<CompiledRuleInput>({
+      userId,
+      role: "rules",
+      schema: compiledRuleSchema,
+      schemaName: "rule",
+      maxTokens: 1024,
+      messages: [
+        { role: "system", content: RULES_SYSTEM },
+        { role: "user", content: naturalText + nudge },
+      ],
+    });
+    if (!r.json) {
+      lastErr = new Error("AI 没有返回规则");
+      continue;
+    }
+    try {
+      return normalizeCompiled(r.json);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 export interface BatchCompileResult {
