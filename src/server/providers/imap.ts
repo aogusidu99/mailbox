@@ -497,13 +497,24 @@ export class ImapProvider implements MailProvider {
   async applyOperation(op: MailOperation): Promise<OperationResult> {
     const client = this.requireClient();
     if (op.type === "create_folder") {
-      // 幂等：文件夹已存在时视为成功（转给助手 / 归档等会重复入队 create_folder）
-      try {
-        await client.mailboxCreate(op.folder);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const code = String((err as { code?: string; serverResponseCode?: string }).code ?? (err as { serverResponseCode?: string }).serverResponseCode ?? "");
-        if (!/exist/i.test(msg) && !/ALREADYEXISTS/i.test(code)) throw err;
+      // 幂等 + 逐级建父：有的服务器（如 QQ）不能一次创建带父级的嵌套文件夹（"AI/Billing"），
+      // 必须先建父文件夹 "AI" 再建子文件夹，否则报 "Invalid top folder name"。
+      const parts = op.folder.split("/").filter(Boolean);
+      for (let i = 1; i <= parts.length; i++) {
+        const path = parts.slice(0, i).join("/");
+        try {
+          await client.mailboxCreate(path);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const code = String((err as { code?: string; serverResponseCode?: string }).code ?? (err as { serverResponseCode?: string }).serverResponseCode ?? "");
+          if (/exist/i.test(msg) || /ALREADYEXISTS/i.test(code)) continue; // 该层已存在，建下一层
+          if (i < parts.length) {
+            // 父层建不出来（服务器不支持该父文件夹名）：放弃整个嵌套，不让同步失败
+            console.warn(`[imap] 创建父文件夹 ${path} 失败，跳过 ${op.folder}:`, msg);
+            return {};
+          }
+          throw err; // 叶子层的真实错误仍上报
+        }
       }
       return {};
     }
