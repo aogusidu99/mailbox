@@ -211,6 +211,17 @@ export function evaluateRule(rule: CompiledRule, ctx: RuleContext): boolean {
   return rule.match === "all" ? results.every(Boolean) : results.some(Boolean);
 }
 
+// 强规则（确定规则）：条件不含 AI 分类/优先级/需回复，判断稳定，优先于 AI 规则执行
+const AI_FIELDS = new Set<RuleCondition["field"]>(["category", "priority", "needsReply"]);
+// 归位类动作：执行后邮件已被妥善安置，后续规则（含 AI 兜底）不该再重复处理这封
+const FILING_ACTIONS = new Set<RuleAction["type"]>(["move", "archive", "trash", "junk"]);
+export function isStrongRule(rule: CompiledRule): boolean {
+  return rule.conditions.length > 0 && !rule.conditions.some((c) => AI_FIELDS.has(c.field));
+}
+function hasFilingAction(rule: CompiledRule): boolean {
+  return rule.actions.some((a) => FILING_ACTIONS.has(a.type));
+}
+
 /** 把规则动作应用到一封邮件（经 ops → outbox） */
 async function executeActions(userId: string, message: Message, rule: CompiledRule): Promise<void> {
   const db = await getDb();
@@ -275,10 +286,12 @@ export async function applyRulesToMessage(accountId: string, messageId: string):
     orderBy: [asc(rules.createdAt)],
   });
   if (active.length === 0) return [];
+  // 强规则（确定规则）优先于 AI 分类规则；同层保持创建顺序（V8 稳定排序）
+  const ordered = [...active].sort((a, b) => Number(isStrongRule(b.compiled)) - Number(isStrongRule(a.compiled)));
   const ai = await db.query.aiAnnotations.findFirst({ where: eq(aiAnnotations.messageId, messageId) });
   const ctx = messageContext(message, ai);
   const hits: string[] = [];
-  for (const rule of active) {
+  for (const rule of ordered) {
     if (!evaluateRule(rule.compiled, ctx)) continue;
     hits.push(rule.name);
     await executeActions(account.userId, message, rule.compiled);
@@ -286,7 +299,8 @@ export async function applyRulesToMessage(accountId: string, messageId: string):
       .update(rules)
       .set({ runCount: rule.runCount + 1, lastRunAt: new Date() })
       .where(eq(rules.id, rule.id));
-    if (rule.compiled.stopProcessing) break;
+    // 强规则已把邮件归档/移动/删除/标垃圾 = 已处理完，AI 兜底规则不再对这封生效
+    if (rule.compiled.stopProcessing || hasFilingAction(rule.compiled)) break;
     // 邮件可能已被移出，后续规则不再处理
     const still = await db.query.messages.findFirst({ where: eq(messages.id, messageId) });
     if (!still) break;

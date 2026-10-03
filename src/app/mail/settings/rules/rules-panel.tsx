@@ -66,6 +66,12 @@ export function describeRule(r: CompiledRule): string {
   return `当 ${conds} → ${acts}`;
 }
 
+const AI_FIELDS = new Set<string>(["category", "priority", "needsReply"]);
+/** 强规则（确定规则）：条件不含 AI 分类/优先级/需回复，优先于 AI 规则执行 */
+function isStrongRuleClient(r: CompiledRule): boolean {
+  return r.conditions.length > 0 && !r.conditions.some((c) => AI_FIELDS.has(c.field));
+}
+
 export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]; accounts: Array<{ id: string; email: string }> }) {
   const router = useRouter();
   const [text, setText] = useState("");
@@ -304,7 +310,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
         <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
           <div>
             <CardTitle>已有规则（{initialRules.length}）</CardTitle>
-            <CardDescription>按创建顺序依次匹配；「立即执行」会对最近 300 封收件箱邮件应用该规则。</CardDescription>
+            <CardDescription><strong>强规则优先</strong>执行、AI 规则兜底；某封被强规则归档 / 移动后，AI 规则不再重复处理它。「立即执行 / 全部立即执行」会对最近 300 封收件箱邮件（含已分类的）重新判断。</CardDescription>
           </div>
           {initialRules.length ? (
             <Button
@@ -329,7 +335,12 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
           {initialRules.map((r) => (
             <div key={r.id} className="flex flex-wrap items-center gap-3 py-3 text-sm">
               <div className="min-w-0 flex-1">
-                <div className="font-medium">{r.name}</div>
+                <div className="font-medium">
+                  {r.name}
+                  <span className={`ml-2 rounded px-1 text-[10px] font-normal ${isStrongRuleClient(r.compiled) ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                    {isStrongRuleClient(r.compiled) ? "强规则" : "AI 规则"}
+                  </span>
+                </div>
                 <div className="text-xs text-muted-foreground">「{r.naturalText}」</div>
                 <div className="text-xs text-muted-foreground">{describeRule(r.compiled)}</div>
                 <div className="text-xs text-muted-foreground">
