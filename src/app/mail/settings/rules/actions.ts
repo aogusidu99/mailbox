@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { CompiledRule } from "@/db/schema";
-import { compileRule, compiledRuleSchema, compileRules, createRule, createRules, deleteRule, listRules, normalizeCompiled, previewRule, previewRules, runAllRules, runRuleNow, updateRule } from "@/server/ai/rules";
+import { compileRule, compiledRuleSchema, compileRules, createRule, createRules, deleteRule, listRules, normalizeCompiled, previewRule, previewRules, runAllRules, runRuleNow, suggestStrongRules, updateRule } from "@/server/ai/rules";
 import { requireUser } from "@/server/auth/session";
 
 type ActionResult<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
@@ -95,6 +95,20 @@ export async function runRuleNowAction(ruleId: string) {
     const n = await runRuleNow(user.id, ruleId);
     revalidatePath("/mail/settings/rules");
     return { applied: n };
+  });
+}
+
+/** 从现有邮件分布归纳强规则建议（按发件人 → 文件夹），返回与批量审核同样的结构供编辑/保存 */
+export async function suggestStrongRulesAction() {
+  return run(async () => {
+    const user = await requireUser();
+    const suggestions = await suggestStrongRules(user.id);
+    const preview = await previewRules(user.id, suggestions.map((s) => s.compiled));
+    return {
+      scanned: preview.scanned,
+      items: suggestions.map((s, i) => ({ naturalText: s.reason, compiled: s.compiled, matchCount: preview.counts[i] ?? 0 })),
+      errors: [] as Array<{ line: string; error: string }>,
+    };
   });
 }
 

@@ -59,7 +59,7 @@ export const RULES_SYSTEM = `你是邮件规则编译器。把用户用自然语
 可用动作（type）：archive（归档）、trash（删除到已删除）、mark_read、mark_unread、flag（星标）、junk（垃圾邮件）、move（移动到文件夹，value 填文件夹名）、label（打 Gmail 标签，value 填标签名）、assistant（转给 AI 助手：把邮件归入「Assistant」标签/文件夹供助手读取，无需 value；用户说「转给助手 / 交给助理 / 让助手处理 / 同步给 assistant」时用它）。
 规则：
 - **每条规则必须同时输出非空的 conditions（针对哪些邮件）和 actions（做什么），两者缺一不可。**
-- 动作词对应：加星标 / 标星 / 星标 → flag；归档 → archive；删除 → trash；标为已读 → mark_read；标为未读 → mark_unread；标为垃圾 → junk；移动到「X」→ move（value=X）；打标签「X」→ label（value=X）；转给助手 / 交给助理 → assistant。
+- 每个动作是对象 {type, value}：type 只能是下列英文值之一——归档=archive、删除=trash、加星标/标星=flag、标为已读=mark_read、标为未读=mark_unread、标为垃圾=junk、移动到某文件夹=move、打 Gmail 标签=label、转给助手/交给助理=assistant。其中 move 的 value 填文件夹名、label 的 value 填标签名，其它动作 value 留空或省略。
 - 「X 类」「X 类邮件」（X ∈ important/todo/notification/billing/newsletter/promotion/social/personal）一律写成 category equals X 条件——**即使动作里的文件夹名与类别同名（如把 promotion 类移到 Promotion 文件夹），也必须写出这个 category 条件**。
 - 「重要」→ category equals important；「优先级高 / 紧急」→ priority equals high；两个条件可同时用（match=all）。
 - 文本匹配不区分大小写；match 为 all 表示全部条件满足，any 表示任一满足。
@@ -88,8 +88,57 @@ export function normalizeCompiled(input: CompiledRuleInput): CompiledRule {
   return { name: input.name || "规则", match: input.match, conditions, actions, stopProcessing: input.stopProcessing ?? false };
 }
 
-/** 自然语言 → 结构化规则（模型是随机的，缺条件/动作时带纠正提示最多重试到 3 次） */
+// 常见「某分类 → 某动作」规则的离线解析：稳定、免费、不依赖模型（模型抽风时的保底）
+const CATEGORY_KEYWORDS: Array<[RegExp, string]> = [
+  [/推广|广告|促销|promotion/i, "promotion"],
+  [/订阅|资讯|周报|newsletter/i, "newsletter"],
+  [/账单|发票|billing/i, "billing"],
+  [/社交|social/i, "social"],
+  [/通知|notification/i, "notification"],
+  [/待办|todo/i, "todo"],
+  [/个人|personal/i, "personal"],
+  [/重要|important/i, "important"],
+];
+
+/**
+ * 确定模式的离线解析（仅限「分类/优先级 + 动作」这类清晰句式）。
+ * 一旦句子里出现发件人/主题等"确定字段"信号，就返回 null 交给 AI——避免漏解析条件导致规则过宽。
+ */
+function parseRuleHeuristic(text: string): CompiledRule | null {
+  const t = text.trim();
+  if (!t) return null;
+  if (/发件人|来自|收件人|主题|标题|正文|附件|邮件列表|包含|开头|结尾|正则/.test(t)) return null;
+
+  const conditions: RuleCondition[] = [];
+  for (const [re, cat] of CATEGORY_KEYWORDS) {
+    if (re.test(t)) {
+      conditions.push({ field: "category", op: "equals", value: cat });
+      break;
+    }
+  }
+  if (/优先级\s*高|高优先级|紧急/.test(t)) conditions.push({ field: "priority", op: "equals", value: "high" });
+  else if (/优先级\s*低|低优先级/.test(t)) conditions.push({ field: "priority", op: "equals", value: "low" });
+
+  const actions: RuleAction[] = [];
+  const moveM = t.match(/(?:移动?[到至]|归入|归类到|放到|分到)\s*[「"']?([A-Za-z0-9一-龥_./-]+?)[」"']?\s*(?:文件夹|目录)?(?:$|[，。、；\s])/);
+  if (moveM && moveM[1] && !/^(文件夹|目录)$/.test(moveM[1])) actions.push({ type: "move", value: moveM[1] });
+  else if (/归档/.test(t)) actions.push({ type: "archive" });
+  if (/加?星标|标星|打星/.test(t)) actions.push({ type: "flag" });
+  if (/标为?已读|标记已读/.test(t)) actions.push({ type: "mark_read" });
+  if (/标为?未读|标记未读/.test(t)) actions.push({ type: "mark_unread" });
+  if (/垃圾邮件|标为?垃圾|标记垃圾/.test(t)) actions.push({ type: "junk" });
+  else if (/删除/.test(t)) actions.push({ type: "trash" });
+  if (/转给?助手|交给助理|让助手|同步给\s*assistant|转给\s*assistant/i.test(t)) actions.push({ type: "assistant" });
+
+  if (conditions.length === 0 || actions.length === 0) return null;
+  const name = (t.length <= 16 ? t : `${t.slice(0, 15)}…`).replace(/\s+/g, "");
+  return { name, match: "all", conditions, actions: actions.slice(0, 5), stopProcessing: false };
+}
+
+/** 自然语言 → 结构化规则：先离线解析常见句式（稳），不行再用 AI（随机，带纠正提示最多重试 3 次）。 */
 export async function compileRule(userId: string, naturalText: string): Promise<CompiledRule> {
+  const heuristic = parseRuleHeuristic(naturalText);
+  if (heuristic) return heuristic;
   let lastErr: unknown = new Error("规则编译失败");
   for (let attempt = 0; attempt < 3; attempt++) {
     const nudge =
@@ -403,6 +452,77 @@ export async function runAllRules(userId: string, limit = 300): Promise<{ scanne
     applied += hits.length;
   }
   return { scanned: rows.length, applied };
+}
+
+export interface RuleSuggestion {
+  compiled: CompiledRule;
+  reason: string;
+}
+
+/**
+ * 从「邮件现在都分到哪了」归纳强规则：某发件人的邮件大多进了某个用户文件夹（且往往还有漏网在收件箱）
+ * → 建议按**发件人**建一条强规则，把这类邮件都稳定归过去（补 AI 分类的漏）。确定性分析，不走模型。
+ */
+export async function suggestStrongRules(userId: string, limit = 2000): Promise<RuleSuggestion[]> {
+  const db = await getDb();
+  const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
+  if (accounts.length === 0) return [];
+  const accIds = accounts.map((a) => a.id);
+  const allFolders = await db.query.folders.findMany({ where: inArray(folders.accountId, accIds) });
+  const folderById = new Map(allFolders.map((f) => [f.id, f]));
+  const rows = await db
+    .select({ from: messages.fromAddrs, folderId: messages.folderId })
+    .from(messages)
+    .where(inArray(messages.accountId, accIds))
+    .orderBy(desc(messages.date))
+    .limit(limit);
+
+  type Stat = { total: number; inbox: number; byFolder: Map<string, number>; display: string };
+  const bySender = new Map<string, Stat>();
+  for (const r of rows) {
+    const a0 = r.from?.[0];
+    const addr = a0?.address?.toLowerCase();
+    if (!addr) continue;
+    const f = folderById.get(r.folderId);
+    if (!f || (f.role && f.role !== "inbox")) continue; // 只看收件箱 + 用户文件夹（忽略 已发送/草稿/垃圾/归档）
+    let s = bySender.get(addr);
+    if (!s) {
+      s = { total: 0, inbox: 0, byFolder: new Map(), display: a0.name || addr };
+      bySender.set(addr, s);
+    }
+    s.total += 1;
+    if (f.role === "inbox") s.inbox += 1;
+    else s.byFolder.set(f.name, (s.byFolder.get(f.name) ?? 0) + 1);
+  }
+
+  const existing = await db.query.rules.findMany({ where: eq(rules.userId, userId) });
+  const out: Array<RuleSuggestion & { strays: number }> = [];
+  for (const [addr, s] of bySender) {
+    if (s.total < 3) continue;
+    let folder = "";
+    let cnt = 0;
+    for (const [name, c] of s.byFolder) {
+      if (c > cnt) {
+        folder = name;
+        cnt = c;
+      }
+    }
+    if (!folder || cnt < 2 || cnt / s.total < 0.5) continue; // 主流去向明确才建议
+    const covered = existing.some(
+      (r) =>
+        r.compiled.actions.some((a) => a.type === "move" && (a.value ?? "").toLowerCase() === folder.toLowerCase()) &&
+        r.compiled.conditions.some((c) => c.field === "from" && (c.value ?? "") !== "" && addr.includes((c.value ?? "").toLowerCase())),
+    );
+    if (covered) continue;
+    out.push({
+      strays: s.inbox,
+      compiled: { name: `${s.display}→${folder}`.slice(0, 20), match: "all", conditions: [{ field: "from", op: "contains", value: addr }], actions: [{ type: "move", value: folder }], stopProcessing: false },
+      reason: `${s.display} <${addr}>：共 ${s.total} 封，${cnt} 封在「${folder}」${s.inbox ? `、还有 ${s.inbox} 封漏在收件箱` : ""} → 发件人含 ${addr} → 移动到 ${folder}`,
+    });
+  }
+  // 漏网多的排前面（最该补规则）
+  out.sort((a, b) => b.strays - a.strays || 0);
+  return out.slice(0, 20).map(({ compiled, reason }) => ({ compiled, reason }));
 }
 
 export async function listRules(userId: string): Promise<Rule[]> {

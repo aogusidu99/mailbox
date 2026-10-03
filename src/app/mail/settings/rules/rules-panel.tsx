@@ -1,18 +1,19 @@
 "use client";
 
-import { Loader2, Play, Sparkles, Trash2 } from "lucide-react";
+import { Loader2, Play, Sparkles, Trash2, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { CompiledRule } from "@/db/schema";
 import type { RulePreviewItem } from "@/server/ai/rules";
 import { formatListDate } from "@/lib/format";
-import { compileRuleAction, compileRulesAction, createRuleAction, createRulesAction, deleteRuleAction, previewRuleAction, runAllRulesAction, runRuleNowAction, toggleRuleAction } from "./actions";
+import { compileRulesAction, createRuleAction, createRulesAction, deleteRuleAction, previewRuleAction, runAllRulesAction, runRuleNowAction, suggestStrongRulesAction, toggleRuleAction } from "./actions";
 import { BLANK_RULE, RuleEditor } from "./rule-editor";
 
 type BatchDraft = { scanned: number; items: Array<{ naturalText: string; compiled: CompiledRule; matchCount: number }>; errors: Array<{ line: string; error: string }> };
@@ -74,30 +75,26 @@ function isStrongRuleClient(r: CompiledRule): boolean {
 
 export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]; accounts: Array<{ id: string; email: string }> }) {
   const router = useRouter();
-  const [text, setText] = useState("");
   const [accountId, setAccountId] = useState<string>("");
+  const [manualOpen, setManualOpen] = useState(false);
   const [draftRule, setDraftRule] = useState<CompiledRule | null>(null);
   const [preview, setPreview] = useState<{ scanned: number; matches: RulePreviewItem[] } | null>(null);
   const [pending, start] = useTransition();
-  // 批量新建（每行一条）
+  // AI 新建（每行一句，可一次多条）
   const [batchText, setBatchText] = useState("");
   const [batchAccountId, setBatchAccountId] = useState<string>("");
   const [batchDraft, setBatchDraft] = useState<BatchDraft | null>(null);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
 
-  const compile = () =>
-    start(async () => {
-      const r = await compileRuleAction(text);
-      if (!r.ok) {
-        toast.error(r.error);
-        return;
-      }
-      setDraftRule(r.data.compiled);
-      setPreview(r.data.preview);
-    });
-
-  // 手动新建「确定规则」（不依赖 AI 分类，如某发件人→某文件夹）
-  const newManual = () => {
+  // 手动新建「确定规则」弹窗（结构化编辑，不依赖 AI 分类）
+  const openManual = () => {
     setDraftRule(JSON.parse(JSON.stringify(BLANK_RULE)) as CompiledRule);
+    setPreview(null);
+    setManualOpen(true);
+  };
+  const closeManual = () => {
+    setManualOpen(false);
+    setDraftRule(null);
     setPreview(null);
   };
 
@@ -116,15 +113,13 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const save = () =>
     start(async () => {
       if (!draftRule) return;
-      const r = await createRuleAction({ naturalText: text || describeRule(draftRule), compiled: draftRule, accountId: accountId || null });
+      const r = await createRuleAction({ naturalText: describeRule(draftRule), compiled: draftRule, accountId: accountId || null });
       if (!r.ok) {
         toast.error(r.error);
         return;
       }
       toast.success("规则已保存，新邮件到达时自动执行");
-      setDraftRule(null);
-      setPreview(null);
-      setText("");
+      closeManual();
       router.refresh();
     });
 
@@ -135,10 +130,40 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
         toast.error(r.error);
         return;
       }
+      setEditingIdx(null);
       setBatchDraft(r.data);
     });
 
+  // 从现有邮件分布归纳强规则建议（按发件人→文件夹），结果进入下方审核区
+  const suggestRules = () =>
+    start(async () => {
+      const r = await suggestStrongRulesAction();
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      if (r.data.items.length === 0) {
+        toast.info("暂时没归纳出规律——先让 AI 规则多分一些邮件（或点「全部立即执行」）再试");
+        return;
+      }
+      setEditingIdx(null);
+      setBatchDraft(r.data);
+      toast.success(`归纳出 ${r.data.items.length} 条候选强规则，请审核`);
+    });
+
   const removeBatchItem = (i: number) => setBatchDraft((d) => (d ? { ...d, items: d.items.filter((_, j) => j !== i) } : d));
+  // 审核时逐条修改 AI 编译出的规则
+  const updateBatchItem = (i: number, compiled: CompiledRule) => setBatchDraft((d) => (d ? { ...d, items: d.items.map((it, j) => (j === i ? { ...it, compiled } : it)) } : d));
+  const rePreviewBatchItem = (i: number) =>
+    start(async () => {
+      if (!batchDraft) return;
+      const r = await previewRuleAction(batchDraft.items[i].compiled);
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      setBatchDraft((d) => (d ? { ...d, items: d.items.map((it, j) => (j === i ? { ...it, matchCount: r.data.matches.length } : it)) } : d));
+    });
 
   const saveBatch = () =>
     start(async () => {
@@ -179,77 +204,19 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>新建规则</CardTitle>
-          <CardDescription>例如：「把所有发票和账单邮件归档到 Finance」「主题包含『面试』的邮件加星标」。AI 生成后可<strong>改条件/动作</strong>再保存；也可点「手动新建」直接建确定规则（如某发件人 → 某文件夹，不依赖 AI 分类、更不易出错）。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Textarea aria-label="规则描述" value={text} onChange={(e) => setText(e.target.value)} placeholder="用一句话描述规则…" className="min-h-20" />
-          <div className="flex flex-wrap items-center gap-2">
-            <select aria-label="适用账号" className="h-8 rounded-lg border border-input bg-background px-2 text-sm" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-              <option value="">所有邮箱</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.email}
-                </option>
-              ))}
-            </select>
-            <Button onClick={compile} disabled={pending || !text.trim()}>
-              {pending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} 用 AI 编译并预览
-            </Button>
-            <Button variant="outline" onClick={newManual} disabled={pending}>
-              手动新建
-            </Button>
-          </div>
-
-          {draftRule ? (
-            <div className="space-y-3">
-              <RuleEditor value={draftRule} onChange={setDraftRule} />
-              <div className="flex flex-wrap items-center gap-2">
-                <Button size="sm" variant="outline" onClick={rePreview} disabled={pending}>
-                  {pending ? <Loader2 className="size-4 animate-spin" /> : null} 试算命中
-                </Button>
-                <Button size="sm" onClick={save} disabled={pending}>
-                  保存规则
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => { setDraftRule(null); setPreview(null); }} disabled={pending}>
-                  放弃
-                </Button>
-              </div>
-              {preview ? (
-                <div className="space-y-1 rounded-md border p-3 text-sm">
-                  <div className="text-xs text-muted-foreground">在最近 {preview.scanned} 封收件箱邮件里试算，命中 {preview.matches.length} 封：</div>
-                  <ul className="max-h-48 space-y-0.5 overflow-auto text-xs">
-                    {preview.matches.slice(0, 50).map((m) => (
-                      <li key={m.messageId}>
-                        <Link href={`/mail/${m.accountId}/${m.folderId}?m=${m.messageId}`} className="hover:underline">
-                          {formatListDate(m.date)} {m.from}：{m.subject ?? "(无主题)"}
-                        </Link>
-                      </li>
-                    ))}
-                    {preview.matches.length === 0 ? <li className="text-muted-foreground">（没有命中，规则仍可保存，之后的新邮件会匹配）</li> : null}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>批量新建规则</CardTitle>
-          <CardDescription>每行一条规则（空行、# 开头的注释行会跳过）。一次编译多条、预览命中数后可全部保存。</CardDescription>
+          <CardTitle>新建规则（自然语言，可批量）</CardTitle>
+          <CardDescription>每行一句话描述——<strong>AI 规则</strong>（按分类，如「把推广类邮件归档」）和<strong>强规则</strong>（确定条件，如「发件人是 xxx 的邮件移动到 Finance」）都写在这里，AI 一次编译成规则（空行、# 注释行跳过）。编译后<strong>可逐条审核、修改、重新试算</strong>，满意再全部保存。也可点「手动新建」用表单从零建；用一阵后点「<strong>总结强规则</strong>」，按邮件现在都分到哪了自动归纳出按发件人的强规则来补漏。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <Textarea
-            aria-label="批量规则（每行一条）"
+            aria-label="规则（每行一条）"
             value={batchText}
             onChange={(e) => setBatchText(e.target.value)}
             placeholder={"把推广广告(promotion)类邮件移动到 Promotion 文件夹\n把订阅资讯(newsletter)类邮件移动到 Newsletter 文件夹\n把账单发票(billing)类邮件移动到 Finance 文件夹\n把重要且优先级高的邮件加星标\n把待办(todo)类邮件加星标并转给助手"}
             className="min-h-32 font-mono text-sm"
           />
           <div className="flex flex-wrap items-center gap-2">
-            <select aria-label="批量适用账号" className="h-8 rounded-lg border border-input bg-background px-2 text-sm" value={batchAccountId} onChange={(e) => setBatchAccountId(e.target.value)}>
+            <select aria-label="适用账号" className="h-8 rounded-lg border border-input bg-background px-2 text-sm" value={batchAccountId} onChange={(e) => setBatchAccountId(e.target.value)}>
               <option value="">所有邮箱</option>
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
@@ -258,7 +225,13 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
               ))}
             </select>
             <Button onClick={compileBatch} disabled={pending || !batchText.trim()}>
-              {pending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} 用 AI 批量编译并预览
+              {pending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} 用 AI 编译并预览
+            </Button>
+            <Button variant="outline" onClick={openManual} disabled={pending}>
+              手动新建（表单）
+            </Button>
+            <Button variant="outline" onClick={suggestRules} disabled={pending} title="分析邮件现在都分到了哪，归纳出按发件人的强规则来补漏">
+              {pending ? <Loader2 className="size-4 animate-spin" /> : <Wand2 className="size-4" />} 总结强规则
             </Button>
           </div>
 
@@ -280,15 +253,34 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
               <div className="text-xs text-muted-foreground">在最近 {batchDraft.scanned} 封收件箱邮件里试算：</div>
               <div className="divide-y rounded-md border">
                 {batchDraft.items.map((it, i) => (
-                  <div key={i} className="flex items-start gap-2 p-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium">{it.compiled.name}</div>
-                      <div className="text-xs text-muted-foreground">{describeRule(it.compiled)}</div>
-                      <div className="text-xs text-muted-foreground">命中 {it.matchCount} 封</div>
+                  <div key={i} className="p-2">
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium">
+                          {it.compiled.name}
+                          <span className={`ml-2 rounded px-1 text-[10px] font-normal ${isStrongRuleClient(it.compiled) ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                            {isStrongRuleClient(it.compiled) ? "强规则" : "AI 规则"}
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground">{describeRule(it.compiled)}</div>
+                        {it.naturalText ? <div className="text-[11px] text-muted-foreground/80">{it.naturalText}</div> : null}
+                        <div className="text-xs text-muted-foreground">命中 {it.matchCount} 封</div>
+                      </div>
+                      <Button size="xs" variant="ghost" onClick={() => setEditingIdx(editingIdx === i ? null : i)} disabled={pending}>
+                        {editingIdx === i ? "收起" : "编辑"}
+                      </Button>
+                      <Button size="xs" variant="ghost" onClick={() => { removeBatchItem(i); if (editingIdx === i) setEditingIdx(null); }} disabled={pending}>
+                        移除
+                      </Button>
                     </div>
-                    <Button size="xs" variant="ghost" onClick={() => removeBatchItem(i)} disabled={pending}>
-                      移除
-                    </Button>
+                    {editingIdx === i ? (
+                      <div className="mt-2 space-y-2">
+                        <RuleEditor value={it.compiled} onChange={(c) => updateBatchItem(i, c)} />
+                        <Button size="xs" variant="outline" onClick={() => rePreviewBatchItem(i)} disabled={pending}>
+                          {pending ? <Loader2 className="size-3.5 animate-spin" /> : null} 重新试算
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
                 {batchDraft.items.length === 0 ? <div className="p-2 text-xs text-muted-foreground">没有可保存的规则。</div> : null}
@@ -362,6 +354,55 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
           ))}
         </CardContent>
       </Card>
+
+      {/* 手动新建确定规则：结构化编辑器弹窗 */}
+      <Dialog open={manualOpen} onOpenChange={(o) => (o ? setManualOpen(true) : closeManual())}>
+        <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>手动新建确定规则</DialogTitle>
+            <DialogDescription>精确设定条件与动作（如 发件人 包含 X → 移动到某文件夹），不依赖 AI 分类、不会出错。</DialogDescription>
+          </DialogHeader>
+          {draftRule ? (
+            <div className="space-y-3">
+              <RuleEditor value={draftRule} onChange={setDraftRule} />
+              <div className="flex flex-wrap items-center gap-2">
+                <select aria-label="适用账号" className="h-8 rounded-lg border border-input bg-background px-2 text-sm" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                  <option value="">所有邮箱</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.email}
+                    </option>
+                  ))}
+                </select>
+                <Button size="sm" variant="outline" onClick={rePreview} disabled={pending}>
+                  {pending ? <Loader2 className="size-4 animate-spin" /> : null} 试算命中
+                </Button>
+                <Button size="sm" onClick={save} disabled={pending}>
+                  保存规则
+                </Button>
+                <Button size="sm" variant="ghost" onClick={closeManual} disabled={pending}>
+                  取消
+                </Button>
+              </div>
+              {preview ? (
+                <div className="space-y-1 rounded-md border p-3 text-sm">
+                  <div className="text-xs text-muted-foreground">在最近 {preview.scanned} 封收件箱邮件里试算，命中 {preview.matches.length} 封：</div>
+                  <ul className="max-h-48 space-y-0.5 overflow-auto text-xs">
+                    {preview.matches.slice(0, 50).map((m) => (
+                      <li key={m.messageId}>
+                        <Link href={`/mail/${m.accountId}/${m.folderId}?m=${m.messageId}`} className="hover:underline">
+                          {formatListDate(m.date)} {m.from}：{m.subject ?? "(无主题)"}
+                        </Link>
+                      </li>
+                    ))}
+                    {preview.matches.length === 0 ? <li className="text-muted-foreground">（没有命中，规则仍可保存，之后的新邮件会匹配）</li> : null}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
