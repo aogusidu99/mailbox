@@ -459,46 +459,97 @@ export interface RuleSuggestion {
   reason: string;
 }
 
+const RULES_SUGGEST_SYSTEM = `你在帮用户把"邮件实际被分到了哪个文件夹"的规律，固化成**确定规则**（强规则）。
+给你一批候选，每个 = 某发件人的邮件：有些已归到文件夹 X、有些还留在收件箱，附两边的示例主题。
+逐个判断能否用一条**可靠、确定**的规则把"这一类"邮件都稳定归到该文件夹（目标文件夹固定为候选给出的那个）：
+- 多数情况用发件人：field=from、op=contains、value=邮箱地址（或其域名，如 @cmbchina.com）。
+- 若同一发件人的邮件按主题去不同地方（示例主题不一致、分布里有多个文件夹），改用 field=subject、op=contains 区分，或 keep=false。
+- 看不出可靠规律就 keep=false。
+- field 只能用 from 或 subject；op 用 contains/not_contains/equals；不要用 AI 分类。
+输出每个候选：{ index, keep, conditions:[{field,op,value}], reason(一句中文) }。`;
+
+const suggestReviewSchema = z.object({
+  reviews: z
+    .array(
+      z.object({
+        index: z.number().catch(-1),
+        keep: z.boolean().catch(true),
+        conditions: z.array(z.object({ field: z.string().catch("from"), op: z.string().catch("contains"), value: z.string().nullish() })).catch([]),
+        reason: z.string().catch(""),
+      }),
+    )
+    .catch([]),
+});
+const SUGGEST_FIELDS = new Set<RuleCondition["field"]>(["from", "subject"]);
+
+interface RuleCandidate {
+  addr: string;
+  display: string;
+  folder: string;
+  filed: number;
+  strays: number;
+  total: number;
+  dist: string;
+  folderSubs: string[];
+  inboxSubs: string[];
+}
+
 /**
- * 从「邮件现在都分到哪了」归纳强规则：某发件人的邮件大多进了某个用户文件夹（且往往还有漏网在收件箱）
- * → 建议按**发件人**建一条强规则，把这类邮件都稳定归过去（补 AI 分类的漏）。确定性分析，不走模型。
+ * 从「邮件现在都分到哪了」归纳强规则：先确定性地找出"某发件人的邮件大多进了某规则目标文件夹、还有漏网在收件箱"的候选
+ * （结合已归 + 漏网两边看），再用 AI **复核**每条——确认是按发件人还是按主题，或没规律就剔除；AI 失败时退回确定性结果。
+ * 最终仍由用户在审核区确认 / 修改。
  */
-export async function suggestStrongRules(userId: string, limit = 2000): Promise<RuleSuggestion[]> {
+export async function suggestStrongRules(userId: string, limit = 10000): Promise<RuleSuggestion[]> {
   const db = await getDb();
   const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
   if (accounts.length === 0) return [];
   const accIds = accounts.map((a) => a.id);
+  const existing = await db.query.rules.findMany({ where: eq(rules.userId, userId) });
+  // 目标文件夹 = 现有规则实际会「移动到」的文件夹（学自你的规则，天然排除 AI 写回 / 系统文件夹）
+  const targetFolders = new Set<string>();
+  for (const r of existing) if (r.enabled) for (const a of r.compiled.actions) if (a.type === "move" && a.value) targetFolders.add(a.value.toLowerCase());
+  if (targetFolders.size === 0) return [];
+
   const allFolders = await db.query.folders.findMany({ where: inArray(folders.accountId, accIds) });
   const folderById = new Map(allFolders.map((f) => [f.id, f]));
   const rows = await db
-    .select({ from: messages.fromAddrs, folderId: messages.folderId })
+    .select({ from: messages.fromAddrs, folderId: messages.folderId, subject: messages.subject })
     .from(messages)
     .where(inArray(messages.accountId, accIds))
     .orderBy(desc(messages.date))
     .limit(limit);
 
-  type Stat = { total: number; inbox: number; byFolder: Map<string, number>; display: string };
+  type Stat = { total: number; inbox: number; byFolder: Map<string, number>; display: string; folderSubs: string[]; inboxSubs: string[] };
   const bySender = new Map<string, Stat>();
   for (const r of rows) {
     const a0 = r.from?.[0];
     const addr = a0?.address?.toLowerCase();
     if (!addr) continue;
     const f = folderById.get(r.folderId);
-    if (!f || (f.role && f.role !== "inbox")) continue; // 只看收件箱 + 用户文件夹（忽略 已发送/草稿/垃圾/归档）
+    if (!f) continue;
+    const isInbox = f.role === "inbox";
+    const isTarget = targetFolders.has(f.name.toLowerCase());
+    if (!isInbox && !isTarget) continue; // 只看收件箱 + 规则会移动到的目标文件夹
     let s = bySender.get(addr);
     if (!s) {
-      s = { total: 0, inbox: 0, byFolder: new Map(), display: a0.name || addr };
+      s = { total: 0, inbox: 0, byFolder: new Map(), display: a0.name || addr, folderSubs: [], inboxSubs: [] };
       bySender.set(addr, s);
     }
     s.total += 1;
-    if (f.role === "inbox") s.inbox += 1;
-    else s.byFolder.set(f.name, (s.byFolder.get(f.name) ?? 0) + 1);
+    const subj = (r.subject ?? "").trim();
+    if (isInbox) {
+      s.inbox += 1;
+      if (subj && s.inboxSubs.length < 4) s.inboxSubs.push(subj);
+    } else {
+      s.byFolder.set(f.name, (s.byFolder.get(f.name) ?? 0) + 1);
+      if (subj && s.folderSubs.length < 4) s.folderSubs.push(subj);
+    }
   }
 
-  const existing = await db.query.rules.findMany({ where: eq(rules.userId, userId) });
-  const out: Array<RuleSuggestion & { strays: number }> = [];
+  const cands: RuleCandidate[] = [];
   for (const [addr, s] of bySender) {
-    if (s.total < 3) continue;
+    const filed = s.total - s.inbox;
+    if (filed < 2) continue; // 至少 2 封已归到文件夹才有规律
     let folder = "";
     let cnt = 0;
     for (const [name, c] of s.byFolder) {
@@ -507,22 +558,68 @@ export async function suggestStrongRules(userId: string, limit = 2000): Promise<
         cnt = c;
       }
     }
-    if (!folder || cnt < 2 || cnt / s.total < 0.5) continue; // 主流去向明确才建议
+    if (!folder || cnt / filed < 0.6) continue; // 已归档的里 ≥60% 进了同一个文件夹
     const covered = existing.some(
       (r) =>
         r.compiled.actions.some((a) => a.type === "move" && (a.value ?? "").toLowerCase() === folder.toLowerCase()) &&
         r.compiled.conditions.some((c) => c.field === "from" && (c.value ?? "") !== "" && addr.includes((c.value ?? "").toLowerCase())),
     );
     if (covered) continue;
-    out.push({
-      strays: s.inbox,
-      compiled: { name: `${s.display}→${folder}`.slice(0, 20), match: "all", conditions: [{ field: "from", op: "contains", value: addr }], actions: [{ type: "move", value: folder }], stopProcessing: false },
-      reason: `${s.display} <${addr}>：共 ${s.total} 封，${cnt} 封在「${folder}」${s.inbox ? `、还有 ${s.inbox} 封漏在收件箱` : ""} → 发件人含 ${addr} → 移动到 ${folder}`,
-    });
+    cands.push({ addr, display: s.display, folder, filed, strays: s.inbox, total: s.total, dist: [...s.byFolder].map(([n, c]) => `${n}:${c}`).join(" "), folderSubs: s.folderSubs, inboxSubs: s.inboxSubs });
   }
-  // 漏网多的排前面（最该补规则）
-  out.sort((a, b) => b.strays - a.strays || 0);
-  return out.slice(0, 20).map(({ compiled, reason }) => ({ compiled, reason }));
+  cands.sort((a, b) => b.strays - a.strays || b.filed - a.filed);
+  const top = cands.slice(0, 20);
+  if (top.length === 0) return [];
+
+  // 确定性兜底（AI 复核失败时用）：发件人 → 目标文件夹
+  const fallback = (c: RuleCandidate): RuleSuggestion => ({
+    compiled: { name: `${c.display}→${c.folder}`.slice(0, 20), match: "all", conditions: [{ field: "from", op: "contains", value: c.addr }], actions: [{ type: "move", value: c.folder }], stopProcessing: false },
+    reason: `${c.display} <${c.addr}>：${c.filed} 封在「${c.folder}」${c.strays ? `、${c.strays} 封漏在收件箱` : ""} → 发件人含 ${c.addr} → 移动到 ${c.folder}`,
+  });
+
+  try {
+    const list = top
+      .map((c, i) =>
+        [
+          `#${i} 发件人：${c.display} <${c.addr}>`,
+          `  目标文件夹 ${c.folder}（已归 ${c.filed} 封、收件箱还有 ${c.strays} 封；分布 ${c.dist}）`,
+          c.folderSubs.length ? `  已归该文件夹的示例主题：${c.folderSubs.map((x) => `「${x}」`).join(" ")}` : "",
+          c.inboxSubs.length ? `  还在收件箱的示例主题：${c.inboxSubs.map((x) => `「${x}」`).join(" ")}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      )
+      .join("\n\n");
+    const r = await runRole<{ reviews?: Array<{ index: number; keep?: boolean; conditions?: Array<{ field: string; op: string; value?: string | null }>; reason?: string }> }>({
+      userId,
+      role: "rules",
+      schema: suggestReviewSchema,
+      schemaName: "rule_review",
+      maxTokens: 2048,
+      messages: [
+        { role: "system", content: RULES_SUGGEST_SYSTEM },
+        { role: "user", content: list },
+      ],
+    });
+    const reviews = r.json?.reviews ?? [];
+    if (reviews.length === 0) return top.map(fallback);
+    const byIdx = new Map(reviews.map((v) => [v.index, v]));
+    const out: RuleSuggestion[] = [];
+    top.forEach((c, i) => {
+      const v = byIdx.get(i);
+      if (v && v.keep === false) return; // AI 判定无可靠规律，剔除
+      const conds = (v?.conditions ?? [])
+        .map((x) => ({ field: (FIELD_ALIASES[x.field] ?? x.field) as RuleCondition["field"], op: x.op as RuleCondition["op"], value: x.value ?? undefined }))
+        .filter((x) => SUGGEST_FIELDS.has(x.field) && RULE_OPS.has(x.op) && (x.value ?? "") !== "");
+      const compiled: CompiledRule = conds.length
+        ? { name: `${c.display}→${c.folder}`.slice(0, 20), match: "all", conditions: conds.slice(0, 4), actions: [{ type: "move", value: c.folder }], stopProcessing: false }
+        : fallback(c).compiled;
+      out.push({ compiled, reason: `${c.display}：${c.filed} 在「${c.folder}」、${c.strays} 漏网${v?.reason ? ` · AI：${v.reason}` : ""}` });
+    });
+    return out;
+  } catch {
+    return top.map(fallback);
+  }
 }
 
 export async function listRules(userId: string): Promise<Rule[]> {
