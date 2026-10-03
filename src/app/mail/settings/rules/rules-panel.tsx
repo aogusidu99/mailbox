@@ -1,9 +1,9 @@
 "use client";
 
-import { Loader2, Play, Sparkles, Trash2, Wand2 } from "lucide-react";
+import { Brain, Loader2, Play, Sparkles, Trash2, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useCallback, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { CompiledRule } from "@/db/schema";
 import type { RulePreviewItem } from "@/server/ai/rules";
 import { formatListDate } from "@/lib/format";
-import { compileRulesAction, createRuleAction, createRulesAction, deleteRuleAction, previewRuleAction, runAllRulesAction, runRuleNowAction, suggestStrongRulesAction, toggleRuleAction } from "./actions";
+import { compileRulesAction, createRuleAction, createRulesAction, deleteRuleAction, draftStrongRulesAction, previewRuleAction, runAllRulesAction, runRuleNowAction, suggestStrongRulesAction, toggleRuleAction } from "./actions";
 import { BLANK_RULE, RuleEditor } from "./rule-editor";
 
 type BatchDraft = { scanned: number; items: Array<{ naturalText: string; compiled: CompiledRule; matchCount: number }>; errors: Array<{ line: string; error: string }> };
@@ -27,6 +27,7 @@ export interface RuleRow {
   accountId: string | null;
   runCount: number;
   lastRunAt: string | null;
+  createdAt: string | null;
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -59,6 +60,7 @@ const ACTION_LABELS: Record<string, string> = {
   junk: "标为垃圾邮件",
   move: "移动到",
   label: "打标签",
+  assistant: "转给助手",
 };
 
 export function describeRule(r: CompiledRule): string {
@@ -73,6 +75,22 @@ function isStrongRuleClient(r: CompiledRule): boolean {
   return r.conditions.length > 0 && !r.conditions.some((c) => AI_FIELDS.has(c.field));
 }
 
+// ---- 筛选 / 分类 / 排序（纯前端，针对「已有规则」列表）----
+const SELECT_CLS = "h-8 rounded-lg border border-input bg-background px-2 text-sm";
+const GLOBAL_ACCOUNT = "__global__"; // 适用邮箱筛选里代表「通用（所有邮箱）」的哨兵值
+type RuleTypeKey = "strong" | "ai";
+type SortKey = "default" | "name" | "runs" | "recent" | "created";
+type GroupKey = "none" | "type" | "account" | "action";
+
+/** 这条规则包含的所有动作类型 */
+function ruleActionTypes(r: CompiledRule): string[] {
+  return r.actions.map((a) => a.type);
+}
+/** 规则的主要动作（取第一个），用于「按动作分类」分组 */
+function primaryAction(r: CompiledRule): string {
+  return r.actions[0]?.type ?? "";
+}
+
 export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]; accounts: Array<{ id: string; email: string }> }) {
   const router = useRouter();
   const [accountId, setAccountId] = useState<string>("");
@@ -85,6 +103,60 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const [batchAccountId, setBatchAccountId] = useState<string>("");
   const [batchDraft, setBatchDraft] = useState<BatchDraft | null>(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
+
+  // 「已有规则」列表的筛选 / 排序 / 分组（规则多时用来快速定位）
+  const [q, setQ] = useState("");
+  const [fAccount, setFAccount] = useState("");
+  const [fType, setFType] = useState<"" | RuleTypeKey>("");
+  const [fAction, setFAction] = useState("");
+  const [fStatus, setFStatus] = useState<"" | "on" | "off">("");
+  const [sortKey, setSortKey] = useState<SortKey>("default");
+  const [groupKey, setGroupKey] = useState<GroupKey>("none");
+
+  const accountEmail = useCallback((id: string | null) => (id ? accounts.find((a) => a.id === id)?.email ?? "指定邮箱" : "通用（所有邮箱）"), [accounts]);
+  const filtersActive = Boolean(q.trim() || fAccount || fType || fAction || fStatus);
+  const clearFilters = () => { setQ(""); setFAccount(""); setFType(""); setFAction(""); setFStatus(""); };
+
+  // 筛选 → 排序 → 分组。describeRule 参与搜索，便于按动作/文件夹名找规则。
+  const groups = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    const filtered = initialRules.filter((r) => {
+      if (fAccount) {
+        const want = fAccount === GLOBAL_ACCOUNT ? null : fAccount; // GLOBAL_ACCOUNT → 只看 accountId 为空（通用）的规则
+        if (r.accountId !== want) return false;
+      }
+      if (fType && (fType === "strong") !== isStrongRuleClient(r.compiled)) return false;
+      if (fAction && !ruleActionTypes(r.compiled).includes(fAction)) return false;
+      if (fStatus && (fStatus === "on") !== r.enabled) return false;
+      if (kw) {
+        const hay = `${r.name}\n${r.naturalText}\n${describeRule(r.compiled)}\n${accountEmail(r.accountId)}`.toLowerCase();
+        if (!hay.includes(kw)) return false;
+      }
+      return true;
+    });
+
+    const sorted = [...filtered];
+    if (sortKey === "name") sorted.sort((a, b) => a.name.localeCompare(b.name, "zh"));
+    else if (sortKey === "runs") sorted.sort((a, b) => b.runCount - a.runCount);
+    else if (sortKey === "recent") sorted.sort((a, b) => (b.lastRunAt ?? "").localeCompare(a.lastRunAt ?? ""));
+    else if (sortKey === "created") sorted.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+    // "default" 保持 listRules 的返回顺序（createdAt 升序）
+
+    if (groupKey === "none") return [{ key: "", label: "", rules: sorted }];
+    const map = new Map<string, { key: string; label: string; rules: RuleRow[] }>();
+    for (const r of sorted) {
+      let key: string;
+      let label: string;
+      if (groupKey === "type") { const s = isStrongRuleClient(r.compiled); key = s ? "strong" : "ai"; label = s ? "强规则" : "AI 规则"; }
+      else if (groupKey === "account") { key = r.accountId ?? GLOBAL_ACCOUNT; label = accountEmail(r.accountId); }
+      else { const a = primaryAction(r.compiled); key = a || "none"; label = ACTION_LABELS[a] ?? a ?? "（无动作）"; }
+      if (!map.has(key)) map.set(key, { key, label, rules: [] });
+      map.get(key)!.rules.push(r);
+    }
+    return [...map.values()];
+  }, [initialRules, accountEmail, q, fAccount, fType, fAction, fStatus, sortKey, groupKey]);
+
+  const shownCount = groups.reduce((n, g) => n + g.rules.length, 0);
 
   // 手动新建「确定规则」弹窗（结构化编辑，不依赖 AI 分类）
   const openManual = () => {
@@ -132,6 +204,28 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
       }
       setEditingIdx(null);
       setBatchDraft(r.data);
+    });
+
+  // 把整段文字当「目标」，让 AI 读邮箱（真实发件人/域名）来起草强规则——解决"域名在邮箱里、不在句子里"的情况
+  const draftRules = () =>
+    start(async () => {
+      const t = batchText.trim();
+      if (!t) {
+        toast.error("请先在上面的输入框里描述你想要的规则目标");
+        return;
+      }
+      const r = await draftStrongRulesAction(t, batchAccountId || null);
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      if (r.data.items.length === 0) {
+        toast.info("没能据此起草出规则——可能描述里提到的发件人 / 域名在邮箱里没找到，换个说法或点名具体发件人再试");
+        return;
+      }
+      setEditingIdx(null);
+      setBatchDraft(r.data);
+      toast.success(`AI 起草了 ${r.data.items.length} 条强规则，请审核`);
     });
 
   // 从现有邮件分布归纳强规则建议（按发件人→文件夹），结果进入下方审核区
@@ -205,7 +299,12 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
       <Card>
         <CardHeader>
           <CardTitle>新建规则（自然语言，可批量）</CardTitle>
-          <CardDescription>每行一句话描述——<strong>AI 规则</strong>（按分类，如「把推广类邮件归档」）和<strong>强规则</strong>（确定条件，如「发件人是 xxx 的邮件移动到 Finance」）都写在这里，AI 一次编译成规则（空行、# 注释行跳过）。编译后<strong>可逐条审核、修改、重新试算</strong>，满意再全部保存。也可点「手动新建」用表单从零建；用一阵后点「<strong>总结强规则</strong>」，按邮件现在都分到哪了自动归纳出按发件人的强规则来补漏。</CardDescription>
+          <CardDescription>
+            两种 AI 方式：<br />
+            ·「<strong>用 AI 编译并预览</strong>」：每行一句、按你写的条件直接编译（适合自带条件的，如「把推广类邮件归档」「发件人是 xxx 的移动到 Finance」）。<br />
+            ·「<strong>AI 起草强规则</strong>」：把整段当<strong>目标</strong>，AI <strong>读你的邮箱</strong>找到真实发件人 / 域名来起草（适合「来自<strong>这个学校</strong>的邮件都放进 Important」这类——真实域名在邮箱里、不在句子里，普通编译只会猜错）。<br />
+            两者结果都<strong>可逐条审核、修改、重新试算</strong>再保存。也可「手动新建」用表单从零建；用一阵后点「<strong>总结强规则</strong>」按邮件现在都分到哪了自动归纳补漏。
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           <Textarea
@@ -226,6 +325,9 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
             </select>
             <Button onClick={compileBatch} disabled={pending || !batchText.trim()}>
               {pending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} 用 AI 编译并预览
+            </Button>
+            <Button variant="outline" onClick={draftRules} disabled={pending || !batchText.trim()} title="把整段文字当目标，AI 读你的邮箱找到真实发件人/域名来起草强规则（适合「来自某学校/某人的邮件都放进某文件夹」这类——域名在邮箱里、不在句子里）">
+              {pending ? <Loader2 className="size-4 animate-spin" /> : <Brain className="size-4" />} AI 起草强规则
             </Button>
             <Button variant="outline" onClick={openManual} disabled={pending}>
               手动新建（表单）
@@ -301,7 +403,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
           <div>
-            <CardTitle>已有规则（{initialRules.length}）</CardTitle>
+            <CardTitle>已有规则（{filtersActive ? `${shownCount} / ${initialRules.length}` : initialRules.length}）</CardTitle>
             <CardDescription><strong>强规则优先</strong>执行、AI 规则兜底；某封被强规则归档 / 移动后，AI 规则不再重复处理它。「立即执行 / 全部立即执行」会对最近 300 封收件箱邮件（含已分类的）重新判断。</CardDescription>
           </div>
           {initialRules.length ? (
@@ -322,36 +424,109 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
             </Button>
           ) : null}
         </CardHeader>
-        <CardContent className="divide-y">
-          {initialRules.length === 0 ? <p className="py-3 text-sm text-muted-foreground">还没有规则。</p> : null}
-          {initialRules.map((r) => (
-            <div key={r.id} className="flex flex-wrap items-center gap-3 py-3 text-sm">
-              <div className="min-w-0 flex-1">
-                <div className="font-medium">
-                  {r.name}
-                  <span className={`ml-2 rounded px-1 text-[10px] font-normal ${isStrongRuleClient(r.compiled) ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
-                    {isStrongRuleClient(r.compiled) ? "强规则" : "AI 规则"}
-                  </span>
-                </div>
-                <div className="text-xs text-muted-foreground">「{r.naturalText}」</div>
-                <div className="text-xs text-muted-foreground">{describeRule(r.compiled)}</div>
-                <div className="text-xs text-muted-foreground">
-                  {r.accountId ? accounts.find((a) => a.id === r.accountId)?.email ?? "指定邮箱" : "所有邮箱"} · 已执行 {r.runCount} 次
-                  {r.lastRunAt ? ` · 最近 ${formatListDate(r.lastRunAt)}` : ""}
-                </div>
+        <CardContent className="space-y-4">
+          {initialRules.length === 0 ? (
+            <p className="py-3 text-sm text-muted-foreground">还没有规则。</p>
+          ) : (
+            <>
+              {/* 筛选 / 排序 / 分类工具条——规则多时用来快速定位 */}
+              <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 p-2">
+                <input
+                  type="search"
+                  aria-label="搜索规则"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="搜索名称 / 条件 / 文件夹…"
+                  className="h-8 min-w-40 flex-1 rounded-lg border border-input bg-background px-2 text-sm"
+                />
+                <select aria-label="适用邮箱" className={SELECT_CLS} value={fAccount} onChange={(e) => setFAccount(e.target.value)}>
+                  <option value="">全部邮箱</option>
+                  <option value={GLOBAL_ACCOUNT}>通用（所有邮箱）</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>{a.email}</option>
+                  ))}
+                </select>
+                <select aria-label="规则类型" className={SELECT_CLS} value={fType} onChange={(e) => setFType(e.target.value as "" | RuleTypeKey)}>
+                  <option value="">全部类型</option>
+                  <option value="strong">强规则</option>
+                  <option value="ai">AI 规则</option>
+                </select>
+                <select aria-label="动作类型" className={SELECT_CLS} value={fAction} onChange={(e) => setFAction(e.target.value)}>
+                  <option value="">全部动作</option>
+                  {Object.entries(ACTION_LABELS).map(([v, l]) => (
+                    <option key={v} value={v}>{l}</option>
+                  ))}
+                </select>
+                <select aria-label="启用状态" className={SELECT_CLS} value={fStatus} onChange={(e) => setFStatus(e.target.value as "" | "on" | "off")}>
+                  <option value="">全部状态</option>
+                  <option value="on">已启用</option>
+                  <option value="off">已停用</option>
+                </select>
+                <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+                <select aria-label="排序方式" className={SELECT_CLS} value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
+                  <option value="default">默认顺序</option>
+                  <option value="name">按名称</option>
+                  <option value="runs">按执行次数</option>
+                  <option value="recent">按最近执行</option>
+                  <option value="created">按最近新建</option>
+                </select>
+                <select aria-label="分类方式" className={SELECT_CLS} value={groupKey} onChange={(e) => setGroupKey(e.target.value as GroupKey)}>
+                  <option value="none">不分类</option>
+                  <option value="type">按类型分类</option>
+                  <option value="account">按邮箱分类</option>
+                  <option value="action">按动作分类</option>
+                </select>
+                {filtersActive ? (
+                  <Button size="xs" variant="ghost" onClick={clearFilters}>清除筛选</Button>
+                ) : null}
               </div>
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                启用
-                <Switch checked={r.enabled} disabled={pending} onCheckedChange={(v) => act(() => toggleRuleAction(r.id, Boolean(v)))} />
-              </label>
-              <Button size="sm" variant="outline" disabled={pending} onClick={() => act(async () => { const res = await runRuleNowAction(r.id); if (res.ok) toast.success(`已对 ${res.data.applied} 封邮件执行`); return res; })}>
-                <Play className="size-4" /> 立即执行
-              </Button>
-              <Button size="sm" variant="destructive" disabled={pending} aria-label={`删除规则 ${r.name}`} onClick={() => act(() => deleteRuleAction(r.id), "已删除")}>
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-          ))}
+
+              {shownCount === 0 ? (
+                <p className="py-3 text-sm text-muted-foreground">没有符合条件的规则。<button type="button" className="text-primary hover:underline" onClick={clearFilters}>清除筛选</button></p>
+              ) : (
+                groups.map((g) => (
+                  <div key={g.key || "all"}>
+                    {groupKey !== "none" ? (
+                      <div className="mb-1 flex items-center gap-2 border-b pb-1 text-xs font-medium text-muted-foreground">
+                        <span>{g.label || "（无动作）"}</span>
+                        <span className="rounded bg-muted px-1.5 py-0.5">{g.rules.length}</span>
+                      </div>
+                    ) : null}
+                    <div className="divide-y">
+                      {g.rules.map((r) => (
+                        <div key={r.id} className="flex flex-wrap items-center gap-3 py-3 text-sm">
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium">
+                              {r.name}
+                              <span className={`ml-2 rounded px-1 text-[10px] font-normal ${isStrongRuleClient(r.compiled) ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>
+                                {isStrongRuleClient(r.compiled) ? "强规则" : "AI 规则"}
+                              </span>
+                            </div>
+                            <div className="text-xs text-muted-foreground">「{r.naturalText}」</div>
+                            <div className="text-xs text-muted-foreground">{describeRule(r.compiled)}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {accountEmail(r.accountId)} · 已执行 {r.runCount} 次
+                              {r.lastRunAt ? ` · 最近 ${formatListDate(r.lastRunAt)}` : ""}
+                            </div>
+                          </div>
+                          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                            启用
+                            <Switch checked={r.enabled} disabled={pending} onCheckedChange={(v) => act(() => toggleRuleAction(r.id, Boolean(v)))} />
+                          </label>
+                          <Button size="sm" variant="outline" disabled={pending} onClick={() => act(async () => { const res = await runRuleNowAction(r.id); if (res.ok) toast.success(`已对 ${res.data.applied} 封邮件执行`); return res; })}>
+                            <Play className="size-4" /> 立即执行
+                          </Button>
+                          <Button size="sm" variant="destructive" disabled={pending} aria-label={`删除规则 ${r.name}`} onClick={() => act(() => deleteRuleAction(r.id), "已删除")}>
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
 

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import type { CompiledRule } from "@/db/schema";
-import { compileRule, compiledRuleSchema, compileRules, createRule, createRules, deleteRule, listRules, normalizeCompiled, previewRule, previewRules, runAllRules, runRuleNow, suggestStrongRules, updateRule } from "@/server/ai/rules";
+import { compileRule, compiledRuleSchema, compileRules, createRule, createRules, deleteRule, draftStrongRules, listRules, normalizeCompiled, previewRule, previewRules, runAllRules, runRuleNow, suggestStrongRules, updateRule } from "@/server/ai/rules";
 import { requireUser } from "@/server/auth/session";
 
 type ActionResult<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
@@ -103,6 +103,22 @@ export async function suggestStrongRulesAction() {
   return run(async () => {
     const user = await requireUser();
     const suggestions = await suggestStrongRules(user.id);
+    const preview = await previewRules(user.id, suggestions.map((s) => s.compiled));
+    return {
+      scanned: preview.scanned,
+      items: suggestions.map((s, i) => ({ naturalText: s.reason, compiled: s.compiled, matchCount: preview.counts[i] ?? 0 })),
+      errors: [] as Array<{ line: string; error: string }>,
+    };
+  });
+}
+
+/** 用自然语言目标 + 邮箱真实数据，让 AI 起草强规则（读邮箱接地），返回与批量审核同样的结构 */
+export async function draftStrongRulesAction(instruction: string, accountId?: string | null) {
+  return run(async () => {
+    const user = await requireUser();
+    const t = instruction.trim();
+    if (!t) throw new Error("请先用一句话描述你想要的规则目标");
+    const suggestions = await draftStrongRules(user.id, t, accountId ?? null);
     const preview = await previewRules(user.id, suggestions.map((s) => s.compiled));
     return {
       scanned: preview.scanned,

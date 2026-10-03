@@ -25,6 +25,7 @@ export default async function RulesPage() {
           accountId: r.accountId,
           runCount: r.runCount,
           lastRunAt: r.lastRunAt ? r.lastRunAt.toISOString() : null,
+          createdAt: r.createdAt ? r.createdAt.toISOString() : null,
         }))}
         accounts={accounts.map((a) => ({ id: a.id, email: a.email }))}
       />

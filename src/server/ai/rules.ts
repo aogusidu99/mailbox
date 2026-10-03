@@ -622,6 +622,122 @@ export async function suggestStrongRules(userId: string, limit = 10000): Promise
   }
 }
 
+// ---- AI 起草强规则（读邮箱「接地」）----
+// 纯文本的规则编译只看句子，碰到「来自这个学校 / 这两个人相同后缀」这类描述，句子里没有真实域名，
+// 模型只能瞎编（如 @university.edu）→ 匹配不到任何邮件。这里把「邮箱里真实存在的发件人 + 域名清单」
+// 一起喂给 AI，要求它只用清单里的真实值来起草强规则，从根本上解决这类"引用邮箱数据"的规则。
+const RULES_DRAFT_SYSTEM = `你是邮件「强规则」起草助手。根据用户的自然语言目标，结合下面给出的「用户邮箱里真实存在的发件人 / 域名清单」，起草一条或多条**确定规则（强规则）**。
+强规则只用确定字段、不依赖 AI 分类：
+- field 只能是 from（发件人名字+地址）、to（收件人）、subject（主题）、listId（邮件列表）、hasAttachment（是否有附件）。**严禁使用 category / priority / needsReply。**
+- op：contains / not_contains / equals / starts_with / ends_with / matches（正则）/ is_true / is_false。
+**最关键：匹配值必须来自下面的真实清单，绝不能凭空编造域名或地址。**
+- 用户若按「人名 / 学校 / 公司 / 相同后缀」描述，就到清单里找到对应发件人，用它们真实的邮箱地址，或它们的**共同域名**；多个同域发件人用一条「from contains @域名」覆盖（域名匹配用 contains 最稳）。
+- 用户点名某个具体发件人 → 用「from contains 其真实邮箱地址」。
+- 如果在清单里**找不到**能对上的发件人 / 域名，就**不要**为这条编造规则（宁可少给、也不要给错）。
+动作（actions[].type）：move（移动到文件夹，value=文件夹名）、archive（归档）、trash（删除）、flag（星标）、mark_read、mark_unread、junk（垃圾邮件）、label（打标签，value=标签名）、assistant（转给助手）。
+- 「放入 / 移动到 / 归入 X 文件夹」→ move，value=X；文件夹名尽量对齐下面「现有文件夹」里的写法（大小写 / 拼写一致）。
+输出 JSON：{ rules: [ { name(≤20字中文), match:"all"|"any", conditions:[{field,op,value}], actions:[{type,value}], reason(一句中文：依据清单里的哪条证据、为什么这么定) } ] }。
+同一条规则多个条件默认 match=all；「任一满足」用 any。`;
+
+const draftRulesSchema = z.object({
+  rules: z
+    .array(
+      z.object({
+        name: z.string().catch(""),
+        match: z.enum(["all", "any"]).catch("all"),
+        conditions: z.array(z.object({ field: z.string().catch(""), op: z.string().catch(""), value: z.string().nullish() })).catch([]),
+        actions: z.array(z.object({ type: z.string().catch(""), value: z.string().nullish() })).catch([]),
+        reason: z.string().catch(""),
+      }),
+    )
+    .catch([]),
+});
+// 强规则允许的字段（起草结果里若混入 AI 分类条件，一律剔除）
+const STRONG_ONLY_FIELDS = new Set<RuleCondition["field"]>(["from", "to", "subject", "listId", "hasAttachment"]);
+
+/**
+ * 用自然语言目标 + 邮箱真实数据，让 AI 起草强规则。
+ * 关键是「接地」：先从邮箱聚合出真实发件人（含指令里点名的人，即使不高频也纳入）与域名清单，
+ * 连同现有文件夹一起作为证据给 AI，要求它只用真实值起草；结果仍进审核区供用户确认 / 修改。
+ */
+export async function draftStrongRules(userId: string, instruction: string, accountId?: string | null): Promise<RuleSuggestion[]> {
+  const text = instruction.trim();
+  if (!text) throw new Error("请先用一句话描述你想要的规则目标");
+  const db = await getDb();
+  const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
+  if (accounts.length === 0) throw new Error("还没有邮箱账号");
+  const accIds = (accountId ? accounts.filter((a) => a.id === accountId) : accounts).map((a) => a.id);
+  if (accIds.length === 0) throw new Error("指定的账号不存在");
+
+  // 真实发件人清单（接地证据）：按出现频次聚合地址
+  const rows = await db
+    .select({ from: messages.fromAddrs })
+    .from(messages)
+    .where(inArray(messages.accountId, accIds))
+    .orderBy(desc(messages.date))
+    .limit(8000);
+  const bySender = new Map<string, { display: string; count: number }>();
+  const byDomain = new Map<string, number>();
+  for (const r of rows) {
+    const a0 = r.from?.[0];
+    const addr = a0?.address?.toLowerCase();
+    if (!addr) continue;
+    const s = bySender.get(addr) ?? { display: a0.name || addr, count: 0 };
+    s.count += 1;
+    bySender.set(addr, s);
+    const dom = addr.split("@")[1];
+    if (dom) byDomain.set(dom, (byDomain.get(dom) ?? 0) + 1);
+  }
+  if (bySender.size === 0) throw new Error("邮箱里还没有可供参考的邮件，先同步一些邮件再起草");
+
+  // 指令里点名的关键词（人名 / 词）对应的发件人优先纳入清单——确保即使不高频也能被 AI 看到
+  const tokens = (text.toLowerCase().match(/[a-z0-9][a-z0-9._-]+|[一-鿿]{2,}/g) ?? []).filter((w) => w.length >= 2);
+  const entries = [...bySender.entries()];
+  const matched = entries.filter(([addr, s]) => tokens.some((t) => addr.includes(t) || s.display.toLowerCase().includes(t)));
+  const matchedAddrs = new Set(matched.map(([a]) => a));
+  const rest = entries.filter(([a]) => !matchedAddrs.has(a)).sort((a, b) => b[1].count - a[1].count);
+  const picked = [...matched.slice(0, 80), ...rest.slice(0, Math.max(40, 160 - Math.min(matched.length, 80)))];
+  const senderList = picked.map(([addr, s]) => `${s.display} <${addr}> ×${s.count}`).join("\n");
+  const domainList = [...byDomain.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([d, c]) => `@${d} ×${c}`).join("  ");
+  const allFolders = await db.query.folders.findMany({ where: inArray(folders.accountId, accIds) });
+  const folderNames = [...new Set(allFolders.map((f) => f.name))].join("  ");
+
+  const prompt = [
+    `目标：${text}`,
+    "",
+    `现有文件夹：${folderNames || "(无)"}`,
+    `常见域名（@域名 ×封数）：${domainList || "(无)"}`,
+    "真实发件人清单（display <address> ×出现次数）：",
+    senderList,
+  ].join("\n");
+
+  const r = await runRole<z.infer<typeof draftRulesSchema>>({
+    userId,
+    role: "rules",
+    schema: draftRulesSchema,
+    schemaName: "draft_rules",
+    maxTokens: 2048,
+    messages: [
+      { role: "system", content: RULES_DRAFT_SYSTEM },
+      { role: "user", content: prompt },
+    ],
+  });
+
+  const out: RuleSuggestion[] = [];
+  for (const raw of r.json?.rules ?? []) {
+    let compiled: CompiledRule;
+    try {
+      compiled = normalizeCompiled(raw);
+    } catch {
+      continue; // 缺条件 / 缺动作的直接跳过
+    }
+    compiled.conditions = compiled.conditions.filter((c) => STRONG_ONLY_FIELDS.has(c.field)); // 去掉混进来的 AI 分类条件
+    if (compiled.conditions.length === 0) continue;
+    out.push({ compiled, reason: (raw.reason ?? "").trim() || "AI 起草的强规则" });
+  }
+  return out;
+}
+
 export async function listRules(userId: string): Promise<Rule[]> {
   const db = await getDb();
   return db.query.rules.findMany({ where: eq(rules.userId, userId), orderBy: [asc(rules.createdAt)] });
