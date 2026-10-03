@@ -760,7 +760,7 @@ export async function createRules(userId: string, items: Array<{ naturalText: st
   return items.length;
 }
 
-export async function updateRule(userId: string, ruleId: string, patch: { enabled?: boolean; name?: string; compiled?: CompiledRule }): Promise<void> {
+export async function updateRule(userId: string, ruleId: string, patch: { enabled?: boolean; name?: string; compiled?: CompiledRule; accountId?: string | null; naturalText?: string }): Promise<void> {
   const db = await getDb();
   await db
     .update(rules)

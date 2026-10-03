@@ -1,6 +1,6 @@
 "use client";
 
-import { Brain, Loader2, Play, Sparkles, Trash2, Wand2 } from "lucide-react";
+import { Brain, Loader2, Pencil, Play, Sparkles, Trash2, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState, useTransition } from "react";
@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { CompiledRule } from "@/db/schema";
 import type { RulePreviewItem } from "@/server/ai/rules";
 import { formatListDate } from "@/lib/format";
-import { compileRulesAction, createRuleAction, createRulesAction, deleteRuleAction, draftStrongRulesAction, previewRuleAction, runAllRulesAction, runRuleNowAction, suggestStrongRulesAction, toggleRuleAction } from "./actions";
+import { compileRulesAction, createRuleAction, createRulesAction, deleteRuleAction, draftStrongRulesAction, editRuleAction, previewRuleAction, runAllRulesAction, runRuleNowAction, suggestStrongRulesAction, toggleRuleAction } from "./actions";
 import { BLANK_RULE, RuleEditor } from "./rule-editor";
 
 type BatchDraft = { scanned: number; items: Array<{ naturalText: string; compiled: CompiledRule; matchCount: number }>; errors: Array<{ line: string; error: string }> };
@@ -95,6 +95,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const router = useRouter();
   const [accountId, setAccountId] = useState<string>("");
   const [manualOpen, setManualOpen] = useState(false);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null); // null=新建，非空=编辑已有规则
   const [draftRule, setDraftRule] = useState<CompiledRule | null>(null);
   const [preview, setPreview] = useState<{ scanned: number; matches: RulePreviewItem[] } | null>(null);
   const [pending, start] = useTransition();
@@ -160,12 +161,23 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
 
   // 手动新建「确定规则」弹窗（结构化编辑，不依赖 AI 分类）
   const openManual = () => {
+    setEditingRuleId(null);
+    setAccountId("");
     setDraftRule(JSON.parse(JSON.stringify(BLANK_RULE)) as CompiledRule);
+    setPreview(null);
+    setManualOpen(true);
+  };
+  // 编辑已保存的规则：同一个弹窗，载入这条规则的条件 / 动作 / 适用邮箱
+  const openEdit = (r: RuleRow) => {
+    setEditingRuleId(r.id);
+    setAccountId(r.accountId ?? "");
+    setDraftRule(JSON.parse(JSON.stringify(r.compiled)) as CompiledRule);
     setPreview(null);
     setManualOpen(true);
   };
   const closeManual = () => {
     setManualOpen(false);
+    setEditingRuleId(null);
     setDraftRule(null);
     setPreview(null);
   };
@@ -185,12 +197,14 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const save = () =>
     start(async () => {
       if (!draftRule) return;
-      const r = await createRuleAction({ naturalText: describeRule(draftRule), compiled: draftRule, accountId: accountId || null });
+      const r = editingRuleId
+        ? await editRuleAction({ ruleId: editingRuleId, compiled: draftRule, naturalText: describeRule(draftRule), accountId: accountId || null })
+        : await createRuleAction({ naturalText: describeRule(draftRule), compiled: draftRule, accountId: accountId || null });
       if (!r.ok) {
         toast.error(r.error);
         return;
       }
-      toast.success("规则已保存，新邮件到达时自动执行");
+      toast.success(editingRuleId ? "规则已更新" : "规则已保存，新邮件到达时自动执行");
       closeManual();
       router.refresh();
     });
@@ -513,6 +527,9 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
                             启用
                             <Switch checked={r.enabled} disabled={pending} onCheckedChange={(v) => act(() => toggleRuleAction(r.id, Boolean(v)))} />
                           </label>
+                          <Button size="sm" variant="outline" disabled={pending} aria-label={`编辑规则 ${r.name}`} onClick={() => openEdit(r)}>
+                            <Pencil className="size-4" /> 编辑
+                          </Button>
                           <Button size="sm" variant="outline" disabled={pending} onClick={() => act(async () => { const res = await runRuleNowAction(r.id); if (res.ok) toast.success(`已对 ${res.data.applied} 封邮件执行`); return res; })}>
                             <Play className="size-4" /> 立即执行
                           </Button>
@@ -530,12 +547,12 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
         </CardContent>
       </Card>
 
-      {/* 手动新建确定规则：结构化编辑器弹窗 */}
+      {/* 结构化编辑器弹窗：新建 / 编辑共用 */}
       <Dialog open={manualOpen} onOpenChange={(o) => (o ? setManualOpen(true) : closeManual())}>
         <DialogContent className="max-h-[90vh] overflow-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>手动新建确定规则</DialogTitle>
-            <DialogDescription>精确设定条件与动作（如 发件人 包含 X → 移动到某文件夹），不依赖 AI 分类、不会出错。</DialogDescription>
+            <DialogTitle>{editingRuleId ? "编辑规则" : "手动新建确定规则"}</DialogTitle>
+            <DialogDescription>精确设定条件与动作（如 发件人 包含 X → 移动到某文件夹）。{editingRuleId ? "改完点「保存规则」即更新这条。" : "不依赖 AI 分类、不会出错。"}</DialogDescription>
           </DialogHeader>
           {draftRule ? (
             <div className="space-y-3">
@@ -553,7 +570,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
                   {pending ? <Loader2 className="size-4 animate-spin" /> : null} 试算命中
                 </Button>
                 <Button size="sm" onClick={save} disabled={pending}>
-                  保存规则
+                  {editingRuleId ? "更新规则" : "保存规则"}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={closeManual} disabled={pending}>
                   取消

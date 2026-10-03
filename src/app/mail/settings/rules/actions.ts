@@ -73,6 +73,16 @@ export async function createRulesAction(input: { items: Array<{ naturalText: str
   });
 }
 
+/** 编辑已保存的规则：改条件 / 动作 / 适用邮箱（naturalText 用描述同步刷新） */
+export async function editRuleAction(input: { ruleId: string; compiled: unknown; naturalText: string; accountId?: string | null }) {
+  return run(async () => {
+    const user = await requireUser();
+    const compiled = normalize(input.compiled);
+    await updateRule(user.id, input.ruleId, { compiled, name: compiled.name, naturalText: input.naturalText, accountId: input.accountId ?? null });
+    revalidatePath("/mail/settings/rules");
+  });
+}
+
 export async function toggleRuleAction(ruleId: string, enabled: boolean) {
   return run(async () => {
     const user = await requireUser();
