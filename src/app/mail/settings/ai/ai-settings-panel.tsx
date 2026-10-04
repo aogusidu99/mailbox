@@ -381,18 +381,10 @@ export function AiSettingsPanel({
       {/* 行为 */}
       <Card>
         <CardHeader>
-          <CardTitle>自动分析与写回</CardTitle>
-          <CardDescription>在「邮箱管理」里为账号打开「AI 处理」后，新邮件拉取正文时会自动分类。</CardDescription>
+          <CardTitle>自动分析</CardTitle>
+          <CardDescription>在「邮箱管理」里为账号打开「AI 处理」后，新邮件拉取正文时会自动分类。分类结果供 AI 规则、每日摘要、列表筛选使用；归档请用「规则」页按分类建规则（如 category → 移动到 AI/&lt;类别&gt;）。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
-          <label className="flex items-center justify-between gap-4">
-            <span>Gmail：把分类写成标签 AI/&lt;类别&gt;（手机上可见）</span>
-            <Switch checked={view.data.writeBack.gmailLabels} disabled={pending} onCheckedChange={(v) => apply(saveBehaviorAction({ writeBack: { gmailLabels: Boolean(v), imapFolders: view.data.writeBack.imapFolders } }))} />
-          </label>
-          <label className="flex items-center justify-between gap-4">
-            <span>其它 IMAP：复制一份到 AI/&lt;类别&gt; 文件夹（默认关闭，避免打扰其它客户端）</span>
-            <Switch checked={view.data.writeBack.imapFolders} disabled={pending} onCheckedChange={(v) => apply(saveBehaviorAction({ writeBack: { gmailLabels: view.data.writeBack.gmailLabels, imapFolders: Boolean(v) } }))} />
-          </label>
           <label className="flex items-center justify-between gap-4">
             <span>自动分析范围</span>
             <select className={selectClass} value={view.data.autoTriageScope} disabled={pending} onChange={(e) => apply(saveBehaviorAction({ autoTriageScope: e.target.value as "inbox" | "all" }))}>

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { listRules } from "@/server/ai/rules";
+import { listRules, ruleAccountIds } from "@/server/ai/rules";
 import { requireUserPage } from "@/server/auth/session";
 import { listAccounts } from "@/server/mail/accounts";
 import { RulesPanel } from "./rules-panel";
@@ -22,7 +22,7 @@ export default async function RulesPage() {
           naturalText: r.naturalText,
           compiled: r.compiled,
           enabled: r.enabled,
-          accountId: r.accountId,
+          accountIds: ruleAccountIds(r), // 有效适用账号（空 = 所有邮箱）
           runCount: r.runCount,
           lastRunAt: r.lastRunAt ? r.lastRunAt.toISOString() : null,
           createdAt: r.createdAt ? r.createdAt.toISOString() : null,

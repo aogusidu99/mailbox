@@ -1,0 +1,1 @@
+ALTER TABLE "rules" ADD COLUMN "account_ids" jsonb DEFAULT '[]'::jsonb NOT NULL;

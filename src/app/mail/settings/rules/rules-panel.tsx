@@ -1,6 +1,6 @@
 "use client";
 
-import { Brain, Loader2, Pencil, Play, Sparkles, Trash2, Wand2 } from "lucide-react";
+import { Brain, ChevronDown, ChevronRight, Loader2, Pencil, Play, Sparkles, Trash2, Wand2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState, useTransition } from "react";
@@ -24,7 +24,7 @@ export interface RuleRow {
   naturalText: string;
   compiled: CompiledRule;
   enabled: boolean;
-  accountId: string | null;
+  accountIds: string[]; // 有效适用账号（空数组 = 所有邮箱）
   runCount: number;
   lastRunAt: string | null;
   createdAt: string | null;
@@ -90,10 +90,35 @@ function ruleActionTypes(r: CompiledRule): string[] {
 function primaryAction(r: CompiledRule): string {
   return r.actions[0]?.type ?? "";
 }
+/** 规则是否对某账号生效：空 = 所有邮箱（含该账号），否则看是否在列表里 */
+function ruleAppliesToAccountClient(accountIds: string[], want: string): boolean {
+  return accountIds.length === 0 || accountIds.includes(want);
+}
+/** 某动作类型在规则里出现时的目标值（move=文件夹、label=标签），用于动作二级筛选 */
+function ruleActionValues(r: CompiledRule, type: string): string[] {
+  return r.actions.filter((a) => a.type === type && (a.value ?? "") !== "").map((a) => a.value as string);
+}
+
+/** 适用邮箱多选：勾选的账号 id 列表（都不勾 = 对所有邮箱生效） */
+function AccountMultiSelect({ accounts, value, onChange }: { accounts: Array<{ id: string; email: string }>; value: string[]; onChange: (ids: string[]) => void }) {
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-input bg-background px-2 py-1.5">
+      <span className="text-xs text-muted-foreground">适用邮箱：</span>
+      {accounts.map((a) => (
+        <label key={a.id} className="flex items-center gap-1 text-xs">
+          <input type="checkbox" className="size-3.5" checked={value.includes(a.id)} onChange={() => toggle(a.id)} />
+          {a.email}
+        </label>
+      ))}
+      <span className="text-[11px] text-muted-foreground">{value.length === 0 ? "（都不勾 = 所有邮箱）" : `已选 ${value.length} 个`}</span>
+    </div>
+  );
+}
 
 export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]; accounts: Array<{ id: string; email: string }> }) {
   const router = useRouter();
-  const [accountId, setAccountId] = useState<string>("");
+  const [manualAccountIds, setManualAccountIds] = useState<string[]>([]);
   const [manualOpen, setManualOpen] = useState(false);
   const [editingRuleId, setEditingRuleId] = useState<string | null>(null); // null=新建，非空=编辑已有规则
   const [draftRule, setDraftRule] = useState<CompiledRule | null>(null);
@@ -101,7 +126,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const [pending, start] = useTransition();
   // AI 新建（每行一句，可一次多条）
   const [batchText, setBatchText] = useState("");
-  const [batchAccountId, setBatchAccountId] = useState<string>("");
+  const [batchAccountIds, setBatchAccountIds] = useState<string[]>([]);
   const [batchDraft, setBatchDraft] = useState<BatchDraft | null>(null);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
 
@@ -110,27 +135,40 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const [fAccount, setFAccount] = useState("");
   const [fType, setFType] = useState<"" | RuleTypeKey>("");
   const [fAction, setFAction] = useState("");
+  const [fActionValue, setFActionValue] = useState(""); // 动作二级筛选：如「移动到」具体哪个文件夹
   const [fStatus, setFStatus] = useState<"" | "on" | "off">("");
   const [sortKey, setSortKey] = useState<SortKey>("default");
   const [groupKey, setGroupKey] = useState<GroupKey>("none");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set()); // 已折叠的分组 key
+  const [runScope, setRunScope] = useState<"all" | "inbox">("all"); // 全部立即执行的范围：含已分类纠错 / 只收件箱
 
-  const accountEmail = useCallback((id: string | null) => (id ? accounts.find((a) => a.id === id)?.email ?? "指定邮箱" : "通用（所有邮箱）"), [accounts]);
-  const filtersActive = Boolean(q.trim() || fAccount || fType || fAction || fStatus);
-  const clearFilters = () => { setQ(""); setFAccount(""); setFType(""); setFAction(""); setFStatus(""); };
+  // 适用邮箱标签：空=所有邮箱；单个=邮箱名；多个=逗号拼接
+  const accountScopeLabel = useCallback((ids: string[]) => (ids.length === 0 ? "所有邮箱" : ids.map((id) => accounts.find((a) => a.id === id)?.email ?? "已删除账号").join("、")), [accounts]);
+  const filtersActive = Boolean(q.trim() || fAccount || fType || fAction || fActionValue || fStatus);
+  const clearFilters = () => { setQ(""); setFAccount(""); setFType(""); setFAction(""); setFActionValue(""); setFStatus(""); };
+  // 动作二级选项：当前所选动作在所有规则里出现过的目标值（文件夹 / 标签），去重
+  const actionValueOptions = useMemo(() => {
+    if (fAction !== "move" && fAction !== "label") return [];
+    return [...new Set(initialRules.flatMap((r) => ruleActionValues(r.compiled, fAction)))].sort((a, b) => a.localeCompare(b, "zh"));
+  }, [initialRules, fAction]);
 
   // 筛选 → 排序 → 分组。describeRule 参与搜索，便于按动作/文件夹名找规则。
   const groups = useMemo(() => {
     const kw = q.trim().toLowerCase();
     const filtered = initialRules.filter((r) => {
       if (fAccount) {
-        const want = fAccount === GLOBAL_ACCOUNT ? null : fAccount; // GLOBAL_ACCOUNT → 只看 accountId 为空（通用）的规则
-        if (r.accountId !== want) return false;
+        if (fAccount === GLOBAL_ACCOUNT) {
+          if (r.accountIds.length !== 0) return false; // 只看「所有邮箱」通用规则
+        } else if (!ruleAppliesToAccountClient(r.accountIds, fAccount)) {
+          return false; // 选单一邮箱 → 对它生效的都算（含通用的、含多邮箱里有它的）
+        }
       }
       if (fType && (fType === "strong") !== isStrongRuleClient(r.compiled)) return false;
       if (fAction && !ruleActionTypes(r.compiled).includes(fAction)) return false;
+      if (fActionValue && !ruleActionValues(r.compiled, fAction).includes(fActionValue)) return false; // 二级：移动到/标签 的具体目标
       if (fStatus && (fStatus === "on") !== r.enabled) return false;
       if (kw) {
-        const hay = `${r.name}\n${r.naturalText}\n${describeRule(r.compiled)}\n${accountEmail(r.accountId)}`.toLowerCase();
+        const hay = `${r.name}\n${r.naturalText}\n${describeRule(r.compiled)}\n${accountScopeLabel(r.accountIds)}`.toLowerCase();
         if (!hay.includes(kw)) return false;
       }
       return true;
@@ -149,20 +187,24 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
       let key: string;
       let label: string;
       if (groupKey === "type") { const s = isStrongRuleClient(r.compiled); key = s ? "strong" : "ai"; label = s ? "强规则" : "AI 规则"; }
-      else if (groupKey === "account") { key = r.accountId ?? GLOBAL_ACCOUNT; label = accountEmail(r.accountId); }
+      else if (groupKey === "account") { label = accountScopeLabel(r.accountIds); key = r.accountIds.length === 0 ? GLOBAL_ACCOUNT : [...r.accountIds].sort().join(","); }
       else { const a = primaryAction(r.compiled); key = a || "none"; label = ACTION_LABELS[a] ?? a ?? "（无动作）"; }
       if (!map.has(key)) map.set(key, { key, label, rules: [] });
       map.get(key)!.rules.push(r);
     }
     return [...map.values()];
-  }, [initialRules, accountEmail, q, fAccount, fType, fAction, fStatus, sortKey, groupKey]);
+  }, [initialRules, accountScopeLabel, q, fAccount, fType, fAction, fActionValue, fStatus, sortKey, groupKey]);
 
   const shownCount = groups.reduce((n, g) => n + g.rules.length, 0);
+  // 分组折叠：点标题行折叠/展开单组；「全部折叠/展开」一键切换
+  const toggleGroup = (key: string) => setCollapsed((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.key));
+  const toggleAllGroups = () => setCollapsed(allCollapsed ? new Set() : new Set(groups.map((g) => g.key)));
 
   // 手动新建「确定规则」弹窗（结构化编辑，不依赖 AI 分类）
   const openManual = () => {
     setEditingRuleId(null);
-    setAccountId("");
+    setManualAccountIds([]);
     setDraftRule(JSON.parse(JSON.stringify(BLANK_RULE)) as CompiledRule);
     setPreview(null);
     setManualOpen(true);
@@ -170,7 +212,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   // 编辑已保存的规则：同一个弹窗，载入这条规则的条件 / 动作 / 适用邮箱
   const openEdit = (r: RuleRow) => {
     setEditingRuleId(r.id);
-    setAccountId(r.accountId ?? "");
+    setManualAccountIds(r.accountIds);
     setDraftRule(JSON.parse(JSON.stringify(r.compiled)) as CompiledRule);
     setPreview(null);
     setManualOpen(true);
@@ -198,8 +240,8 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
     start(async () => {
       if (!draftRule) return;
       const r = editingRuleId
-        ? await editRuleAction({ ruleId: editingRuleId, compiled: draftRule, naturalText: describeRule(draftRule), accountId: accountId || null })
-        : await createRuleAction({ naturalText: describeRule(draftRule), compiled: draftRule, accountId: accountId || null });
+        ? await editRuleAction({ ruleId: editingRuleId, compiled: draftRule, naturalText: describeRule(draftRule), accountIds: manualAccountIds })
+        : await createRuleAction({ naturalText: describeRule(draftRule), compiled: draftRule, accountIds: manualAccountIds });
       if (!r.ok) {
         toast.error(r.error);
         return;
@@ -228,7 +270,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
         toast.error("请先在上面的输入框里描述你想要的规则目标");
         return;
       }
-      const r = await draftStrongRulesAction(t, batchAccountId || null);
+      const r = await draftStrongRulesAction(t, batchAccountIds);
       if (!r.ok) {
         toast.error(r.error);
         return;
@@ -276,7 +318,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const saveBatch = () =>
     start(async () => {
       if (!batchDraft || batchDraft.items.length === 0) return;
-      const r = await createRulesAction({ items: batchDraft.items.map((it) => ({ naturalText: it.naturalText, compiled: it.compiled })), accountId: batchAccountId || null });
+      const r = await createRulesAction({ items: batchDraft.items.map((it) => ({ naturalText: it.naturalText, compiled: it.compiled })), accountIds: batchAccountIds });
       if (!r.ok) {
         toast.error(r.error);
         return;
@@ -328,15 +370,8 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
             placeholder={"把推广广告(promotion)类邮件移动到 Promotion 文件夹\n把订阅资讯(newsletter)类邮件移动到 Newsletter 文件夹\n把账单发票(billing)类邮件移动到 Finance 文件夹\n把重要且优先级高的邮件加星标\n把待办(todo)类邮件加星标并转给助手"}
             className="min-h-32 font-mono text-sm"
           />
+          <AccountMultiSelect accounts={accounts} value={batchAccountIds} onChange={setBatchAccountIds} />
           <div className="flex flex-wrap items-center gap-2">
-            <select aria-label="适用账号" className="h-8 rounded-lg border border-input bg-background px-2 text-sm" value={batchAccountId} onChange={(e) => setBatchAccountId(e.target.value)}>
-              <option value="">所有邮箱</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.email}
-                </option>
-              ))}
-            </select>
             <Button onClick={compileBatch} disabled={pending || !batchText.trim()}>
               {pending ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} 用 AI 编译并预览
             </Button>
@@ -366,7 +401,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
                   </Button>
                 </div>
               ) : null}
-              <div className="text-xs text-muted-foreground">在最近 {batchDraft.scanned} 封收件箱邮件里试算：</div>
+              <div className="text-xs text-muted-foreground">在最近 {batchDraft.scanned} 封邮件（收件箱 + 各分类文件夹）里试算：</div>
               <div className="divide-y rounded-md border">
                 {batchDraft.items.map((it, i) => (
                   <div key={i} className="p-2">
@@ -418,24 +453,34 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
         <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
           <div>
             <CardTitle>已有规则（{filtersActive ? `${shownCount} / ${initialRules.length}` : initialRules.length}）</CardTitle>
-            <CardDescription><strong>强规则优先</strong>执行、AI 规则兜底；某封被强规则归档 / 移动后，AI 规则不再重复处理它。「立即执行 / 全部立即执行」会对最近 300 封收件箱邮件（含已分类的）重新判断。</CardDescription>
+            <CardDescription><strong>强规则优先</strong>执行、AI 规则兜底；某封被强规则归档 / 移动后，AI 规则不再重复处理它。新邮件到达时<strong>只处理收件箱</strong>、不动已分类的。手动「全部立即执行」可选范围：<strong>含已分类文件夹（纠错）</strong>——把错分的邮件捞回；或<strong>只收件箱（日常）</strong>。</CardDescription>
           </div>
           {initialRules.length ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pending}
-              onClick={() => {
-                if (!confirm("对每个账号最近 300 封收件箱邮件跑一遍所有启用的规则？移动 / 归档 / 删除等会立即执行。")) return;
-                act(async () => {
-                  const res = await runAllRulesAction();
-                  if (res.ok) toast.success(`扫描 ${res.data.scanned} 封，命中执行 ${res.data.applied} 次`);
-                  return res;
-                });
-              }}
-            >
-              {pending ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />} 全部立即执行
-            </Button>
+            <div className="flex items-center gap-2">
+              <select aria-label="执行范围" className={SELECT_CLS} value={runScope} onChange={(e) => setRunScope(e.target.value as "all" | "inbox")} disabled={pending}>
+                <option value="all">含已分类文件夹（纠错）</option>
+                <option value="inbox">只收件箱（日常）</option>
+              </select>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() => {
+                  const msg =
+                    runScope === "all"
+                      ? "对最近约 1000 封邮件（收件箱 + 各分类文件夹）跑一遍所有启用的规则？强规则优先、会把错分的邮件移到正确文件夹；移动 / 归档 / 删除等立即执行。"
+                      : "对最近约 1000 封收件箱邮件跑一遍所有启用的规则？不会动已分类文件夹里的邮件；移动 / 归档 / 删除等立即执行。";
+                  if (!confirm(msg)) return;
+                  act(async () => {
+                    const res = await runAllRulesAction(runScope);
+                    if (res.ok) toast.success(`扫描 ${res.data.scanned} 封，命中执行 ${res.data.applied} 次`);
+                    return res;
+                  });
+                }}
+              >
+                {pending ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />} 全部立即执行
+              </Button>
+            </div>
           ) : null}
         </CardHeader>
         <CardContent className="space-y-4">
@@ -465,12 +510,20 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
                   <option value="strong">强规则</option>
                   <option value="ai">AI 规则</option>
                 </select>
-                <select aria-label="动作类型" className={SELECT_CLS} value={fAction} onChange={(e) => setFAction(e.target.value)}>
+                <select aria-label="动作类型" className={SELECT_CLS} value={fAction} onChange={(e) => { setFAction(e.target.value); setFActionValue(""); }}>
                   <option value="">全部动作</option>
                   {Object.entries(ACTION_LABELS).map(([v, l]) => (
                     <option key={v} value={v}>{l}</option>
                   ))}
                 </select>
+                {actionValueOptions.length ? (
+                  <select aria-label={fAction === "move" ? "移动到哪个文件夹" : "哪个标签"} className={SELECT_CLS} value={fActionValue} onChange={(e) => setFActionValue(e.target.value)}>
+                    <option value="">{fAction === "move" ? "全部文件夹" : "全部标签"}</option>
+                    {actionValueOptions.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                ) : null}
                 <select aria-label="启用状态" className={SELECT_CLS} value={fStatus} onChange={(e) => setFStatus(e.target.value as "" | "on" | "off")}>
                   <option value="">全部状态</option>
                   <option value="on">已启用</option>
@@ -490,6 +543,9 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
                   <option value="account">按邮箱分类</option>
                   <option value="action">按动作分类</option>
                 </select>
+                {groupKey !== "none" && shownCount > 0 ? (
+                  <Button size="xs" variant="ghost" onClick={toggleAllGroups}>{allCollapsed ? "全部展开" : "全部折叠"}</Button>
+                ) : null}
                 {filtersActive ? (
                   <Button size="xs" variant="ghost" onClick={clearFilters}>清除筛选</Button>
                 ) : null}
@@ -501,13 +557,14 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
                 groups.map((g) => (
                   <div key={g.key || "all"}>
                     {groupKey !== "none" ? (
-                      <div className="mb-1 flex items-center gap-2 border-b pb-1 text-xs font-medium text-muted-foreground">
+                      <button type="button" onClick={() => toggleGroup(g.key)} className="mb-1 flex w-full items-center gap-2 border-b pb-1 text-left text-xs font-medium text-muted-foreground hover:text-foreground">
+                        {collapsed.has(g.key) ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
                         <span>{g.label || "（无动作）"}</span>
                         <span className="rounded bg-muted px-1.5 py-0.5">{g.rules.length}</span>
-                      </div>
+                      </button>
                     ) : null}
                     <div className="divide-y">
-                      {g.rules.map((r) => (
+                      {(groupKey === "none" || !collapsed.has(g.key)) && g.rules.map((r) => (
                         <div key={r.id} className="flex flex-wrap items-center gap-3 py-3 text-sm">
                           <div className="min-w-0 flex-1">
                             <div className="font-medium">
@@ -519,7 +576,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
                             <div className="text-xs text-muted-foreground">「{r.naturalText}」</div>
                             <div className="text-xs text-muted-foreground">{describeRule(r.compiled)}</div>
                             <div className="text-xs text-muted-foreground">
-                              {accountEmail(r.accountId)} · 已执行 {r.runCount} 次
+                              {accountScopeLabel(r.accountIds)} · 已执行 {r.runCount} 次
                               {r.lastRunAt ? ` · 最近 ${formatListDate(r.lastRunAt)}` : ""}
                             </div>
                           </div>
@@ -557,15 +614,8 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
           {draftRule ? (
             <div className="space-y-3">
               <RuleEditor value={draftRule} onChange={setDraftRule} />
+              <AccountMultiSelect accounts={accounts} value={manualAccountIds} onChange={setManualAccountIds} />
               <div className="flex flex-wrap items-center gap-2">
-                <select aria-label="适用账号" className="h-8 rounded-lg border border-input bg-background px-2 text-sm" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-                  <option value="">所有邮箱</option>
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.email}
-                    </option>
-                  ))}
-                </select>
                 <Button size="sm" variant="outline" onClick={rePreview} disabled={pending}>
                   {pending ? <Loader2 className="size-4 animate-spin" /> : null} 试算命中
                 </Button>
@@ -578,7 +628,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
               </div>
               {preview ? (
                 <div className="space-y-1 rounded-md border p-3 text-sm">
-                  <div className="text-xs text-muted-foreground">在最近 {preview.scanned} 封收件箱邮件里试算，命中 {preview.matches.length} 封：</div>
+                  <div className="text-xs text-muted-foreground">在最近 {preview.scanned} 封邮件（收件箱 + 各分类文件夹）里试算，命中 {preview.matches.length} 封：</div>
                   <ul className="max-h-48 space-y-0.5 overflow-auto text-xs">
                     {preview.matches.slice(0, 50).map((m) => (
                       <li key={m.messageId}>

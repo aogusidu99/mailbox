@@ -57,6 +57,13 @@
       "when": 1789428104199,
       "tag": "0007_thankful_nighthawk",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791140234990,
+      "tag": "0008_tricky_zaran",
+      "breakpoints": true
     }
   ]
 }

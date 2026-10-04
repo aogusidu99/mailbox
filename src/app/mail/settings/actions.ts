@@ -156,7 +156,7 @@ export async function removeCustomProviderAction(id: string) {
   });
 }
 
-export async function saveBehaviorAction(patch: Partial<Pick<AiSettingsData, "writeBack" | "autoTriageScope" | "autoTranslateEnglish">>) {
+export async function saveBehaviorAction(patch: Partial<Pick<AiSettingsData, "autoTriageScope" | "autoTranslateEnglish">>) {
   return run(async () => {
     const user = await requireUser();
     await saveAiSettings(user.id, (s) => ({
@@ -165,7 +165,6 @@ export async function saveBehaviorAction(patch: Partial<Pick<AiSettingsData, "wr
         ...s.data,
         ...(patch.autoTriageScope ? { autoTriageScope: patch.autoTriageScope } : {}),
         ...(patch.autoTranslateEnglish !== undefined ? { autoTranslateEnglish: patch.autoTranslateEnglish } : {}),
-        writeBack: { ...s.data.writeBack, ...(patch.writeBack ?? {}) },
       },
     }));
     return view(user.id);

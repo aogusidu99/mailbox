@@ -37,10 +37,10 @@ export async function previewRuleAction(compiled: unknown) {
   });
 }
 
-export async function createRuleAction(input: { naturalText: string; compiled: unknown; accountId?: string | null }) {
+export async function createRuleAction(input: { naturalText: string; compiled: unknown; accountIds?: string[] }) {
   return run(async () => {
     const user = await requireUser();
-    const rule = await createRule(user.id, { naturalText: input.naturalText, compiled: normalize(input.compiled), accountId: input.accountId ?? null });
+    const rule = await createRule(user.id, { naturalText: input.naturalText, compiled: normalize(input.compiled), accountIds: input.accountIds ?? [] });
     revalidatePath("/mail/settings/rules");
     return { id: rule.id };
   });
@@ -63,22 +63,23 @@ export async function compileRulesAction(text: string) {
 }
 
 /** 批量保存规则 */
-export async function createRulesAction(input: { items: Array<{ naturalText: string; compiled: unknown }>; accountId?: string | null }) {
+export async function createRulesAction(input: { items: Array<{ naturalText: string; compiled: unknown }>; accountIds?: string[] }) {
   return run(async () => {
     const user = await requireUser();
     const items = input.items.map((it) => ({ naturalText: it.naturalText, compiled: normalize(it.compiled) }));
-    const created = await createRules(user.id, items, input.accountId ?? null);
+    const created = await createRules(user.id, items, input.accountIds ?? []);
     revalidatePath("/mail/settings/rules");
     return { created };
   });
 }
 
 /** 编辑已保存的规则：改条件 / 动作 / 适用邮箱（naturalText 用描述同步刷新） */
-export async function editRuleAction(input: { ruleId: string; compiled: unknown; naturalText: string; accountId?: string | null }) {
+export async function editRuleAction(input: { ruleId: string; compiled: unknown; naturalText: string; accountIds?: string[] }) {
   return run(async () => {
     const user = await requireUser();
     const compiled = normalize(input.compiled);
-    await updateRule(user.id, input.ruleId, { compiled, name: compiled.name, naturalText: input.naturalText, accountId: input.accountId ?? null });
+    // accountId 置空：改用 accountIds 作为唯一来源（清掉旧的单账号回退）
+    await updateRule(user.id, input.ruleId, { compiled, name: compiled.name, naturalText: input.naturalText, accountIds: input.accountIds ?? [], accountId: null });
     revalidatePath("/mail/settings/rules");
   });
 }
@@ -123,12 +124,12 @@ export async function suggestStrongRulesAction() {
 }
 
 /** 用自然语言目标 + 邮箱真实数据，让 AI 起草强规则（读邮箱接地），返回与批量审核同样的结构 */
-export async function draftStrongRulesAction(instruction: string, accountId?: string | null) {
+export async function draftStrongRulesAction(instruction: string, accountIds: string[] = []) {
   return run(async () => {
     const user = await requireUser();
     const t = instruction.trim();
     if (!t) throw new Error("请先用一句话描述你想要的规则目标");
-    const suggestions = await draftStrongRules(user.id, t, accountId ?? null);
+    const suggestions = await draftStrongRules(user.id, t, accountIds);
     const preview = await previewRules(user.id, suggestions.map((s) => s.compiled));
     return {
       scanned: preview.scanned,
@@ -138,11 +139,11 @@ export async function draftStrongRulesAction(instruction: string, accountId?: st
   });
 }
 
-/** 一键把所有启用的规则跑一遍存量邮件 */
-export async function runAllRulesAction() {
+/** 一键把所有启用的规则跑一遍存量邮件；scope=inbox 只收件箱（日常），scope=all 含已分类文件夹（纠错） */
+export async function runAllRulesAction(scope: "inbox" | "all" = "all") {
   return run(async () => {
     const user = await requireUser();
-    const r = await runAllRules(user.id);
+    const r = await runAllRules(user.id, scope);
     revalidatePath("/mail/settings/rules");
     return r;
   });

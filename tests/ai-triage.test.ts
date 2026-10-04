@@ -97,7 +97,7 @@ describe("AI triage / 降级 / 摘要", () => {
     expect(loaded.data.defaultProvider).toBe("fake");
   });
 
-  test("triage：首选模型 500 → 降级到候选池下一个，结果入库并写回 Gmail 标签", async () => {
+  test("triage：首选模型 500 → 降级到候选池下一个，结果入库（分类不再写回标签 / 文件夹）", async () => {
     const out = await triageMessage(accountId, messageId);
     expect(out?.category).toBe("billing");
     const ann = await handle.db.query.aiAnnotations.findFirst({ where: eq(aiAnnotations.messageId, messageId) });
@@ -112,11 +112,9 @@ describe("AI triage / 降级 / 摘要", () => {
     expect(usage[0].fallbackFrom).toBe("fake-broken");
     expect(usage[0].inputTokens).toBe(100);
 
+    // 分类结果不再自动写回服务器（不产生任何邮箱操作）——归档交给规则引擎
     const ops = await handle.db.query.mailOps.findMany({ where: eq(mailOps.accountId, accountId) });
-    expect(ops.map((o) => o.type)).toEqual(["create_folder", "set_labels"]);
-    const payload = ops[1].payload as { op: { add: string[]; uids: number[] } };
-    expect(payload.op.add).toEqual(["AI/Billing"]);
-    expect(payload.op.uids).toEqual([7]);
+    expect(ops).toHaveLength(0);
   });
 
   test("已有标注不会重复分析；force 会重新分析", async () => {

@@ -2,16 +2,14 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiAnnotations, folders, mailAccounts, messages } from "@/db/schema";
 import { enqueueAiTriage } from "@/server/jobs/queues";
-import { enqueueRawOperation } from "@/server/mail/ops";
 import { publish } from "@/server/realtime/bus";
 import { runRole } from "./client";
-import { CATEGORY_LABEL_NAMES, messageToPromptText, PROMPT_VERSION, TRIAGE_SYSTEM, triageSchema, type TriageOutput } from "./prompts";
+import { messageToPromptText, PROMPT_VERSION, TRIAGE_SYSTEM, triageSchema, type TriageOutput } from "./prompts";
 import { loadAiSettings } from "./settings";
 
 /**
- * AI 分类 / 优先级 / 摘要（triage 等级），结果存 ai_annotations，并按设置写回服务器：
- * - Gmail：加标签 AI/<Category>（标签不存在时先创建）
- * - 其它 IMAP：可选复制到 AI/<Category> 文件夹（默认关闭）
+ * AI 分类 / 优先级 / 摘要（triage 等级），结果存 ai_annotations。
+ * 分类结果供 AI 规则、每日摘要、列表筛选等使用；邮件归档交给规则引擎（不再自动写回标签 / 文件夹）。
  */
 
 export async function triageMessage(accountId: string, messageId: string, opts: { force?: boolean } = {}): Promise<TriageOutput | null> {
@@ -72,10 +70,6 @@ export async function triageMessage(accountId: string, messageId: string, opts: 
       },
     });
 
-  await writeBack(account.id, account.presetId === "gmail" || account.provider === "gmail", folder.path, message.uid, output, settings.data.writeBack).catch((err) =>
-    console.warn("[ai] 分类写回失败:", err instanceof Error ? err.message : err),
-  );
-
   publish({ type: "message", accountId, folderId: message.folderId, messageId });
   console.log(`[ai] ${account.email} 「${message.subject ?? ""}」→ ${output.category}/${output.priority}（${result.model}${result.fallbackFrom ? "，降级" : ""}）`);
 
@@ -85,22 +79,6 @@ export async function triageMessage(accountId: string, messageId: string, opts: 
     await applyRulesToMessage(accountId, messageId).catch((err) => console.warn("[rules] 执行失败:", err instanceof Error ? err.message : err));
   }
   return output;
-}
-
-async function writeBack(accountId: string, isGmail: boolean, folderPath: string, uid: number, output: TriageOutput, mode: { gmailLabels: boolean; imapFolders: boolean }) {
-  const label = CATEGORY_LABEL_NAMES[output.category];
-  const db = await getDb();
-  const known = await db.query.folders.findMany({ where: eq(folders.accountId, accountId) });
-  if (isGmail && mode.gmailLabels) {
-    // Gmail 里标签即文件夹：不存在就先创建
-    if (!known.some((f) => f.path === label)) await enqueueRawOperation(accountId, { type: "create_folder", folder: label }, []);
-    await enqueueRawOperation(accountId, { type: "set_labels", folder: folderPath, uids: [uid], add: [label] }, [folderPath]);
-    return;
-  }
-  if (!isGmail && mode.imapFolders) {
-    if (!known.some((f) => f.path === label)) await enqueueRawOperation(accountId, { type: "create_folder", folder: label }, []);
-    await enqueueRawOperation(accountId, { type: "copy", folder: folderPath, uids: [uid], toFolder: label }, [label]);
-  }
 }
 
 /** 对已有邮件回填分析：最近 limit 封没有标注且已拉取正文的收件箱邮件 */

@@ -99,7 +99,8 @@ describe("规则编译 / 执行（假 AI + PGlite）", () => {
   });
 
   test("自然语言编译成规则并在收件箱上预览", async () => {
-    const compiled = await compileRule(userId, "发票邮件标为已读并加星标");
+    // 带「主题/包含」→ 跳过离线启发式、走 AI 编译（覆盖 AI 编译链路；假 AI 返回按主题含「发票」匹配的规则）
+    const compiled = await compileRule(userId, "把主题包含发票的邮件标为已读并加星标");
     expect(compiled.name).toBe("发票归档");
     expect(compiled.actions.map((a) => a.type)).toEqual(["mark_read", "flag"]);
     const preview = await previewRule(userId, compiled);
@@ -108,8 +109,8 @@ describe("规则编译 / 执行（假 AI + PGlite）", () => {
   });
 
   test("新邮件命中规则 → 本地更新 + outbox 操作；未命中不动", async () => {
-    const compiled = await compileRule(userId, "发票邮件标为已读并加星标");
-    await createRule(userId, { naturalText: "发票邮件标为已读并加星标", compiled });
+    const compiled = await compileRule(userId, "把主题包含发票的邮件标为已读并加星标");
+    await createRule(userId, { naturalText: "把主题包含发票的邮件标为已读并加星标", compiled });
 
     expect(await applyRulesToMessage(accountId, invoiceId)).toEqual(["发票归档"]);
     const invoice = await handle.db.query.messages.findFirst({ where: eq(messages.id, invoiceId) });

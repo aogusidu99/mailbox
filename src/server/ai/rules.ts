@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { aiAnnotations, folders, mailAccounts, messages, rules, type CompiledRule, type Message, type Rule, type RuleAction, type RuleCondition } from "@/db/schema";
@@ -123,6 +123,9 @@ function parseRuleHeuristic(text: string): CompiledRule | null {
   const moveM = t.match(/(?:移动?[到至]|归入|归类到|放到|分到)\s*[「"']?([A-Za-z0-9一-龥_./-]+?)[」"']?\s*(?:文件夹|目录)?(?:$|[，。、；\s])/);
   if (moveM && moveM[1] && !/^(文件夹|目录)$/.test(moveM[1])) actions.push({ type: "move", value: moveM[1] });
   else if (/归档/.test(t)) actions.push({ type: "archive" });
+  // 打标签（Gmail）：打/加/贴标签 X —— value 填标签名
+  const labelM = t.match(/(?:打|加|贴|设为?)?标签\s*[「"']?([A-Za-z0-9一-龥_./-]+?)[」"']?\s*(?:$|[，。、；\s])/);
+  if (labelM && labelM[1] && labelM[1] !== "标签") actions.push({ type: "label", value: labelM[1] });
   if (/加?星标|标星|打星/.test(t)) actions.push({ type: "flag" });
   if (/标为?已读|标记已读/.test(t)) actions.push({ type: "mark_read" });
   if (/标为?未读|标记未读/.test(t)) actions.push({ type: "mark_unread" });
@@ -271,6 +274,17 @@ function hasFilingAction(rule: CompiledRule): boolean {
   return rule.actions.some((a) => FILING_ACTIONS.has(a.type));
 }
 
+/** 规则实际适用的账号 id 列表（空数组 = 对所有邮箱生效）；accountIds 优先，为空时回退到旧的单账号 accountId */
+export function ruleAccountIds(rule: { accountIds?: string[] | null; accountId?: string | null }): string[] {
+  if (rule.accountIds && rule.accountIds.length) return rule.accountIds;
+  return rule.accountId ? [rule.accountId] : [];
+}
+/** 这条规则是否对某账号生效（空 = 所有邮箱都生效，含该账号） */
+export function ruleAppliesTo(rule: { accountIds?: string[] | null; accountId?: string | null }, accountId: string): boolean {
+  const ids = ruleAccountIds(rule);
+  return ids.length === 0 || ids.includes(accountId);
+}
+
 /** 把规则动作应用到一封邮件（经 ops → outbox） */
 async function executeActions(userId: string, message: Message, rule: CompiledRule): Promise<void> {
   const db = await getDb();
@@ -279,6 +293,7 @@ async function executeActions(userId: string, message: Message, rule: CompiledRu
   for (const action of rule.actions) {
     switch (action.type) {
       case "archive":
+        if (owned.folder.role === "archive") return; // 已在归档
         await moveMessages(userId, [message.id], { role: "archive" });
         return; // 移出后后续动作无意义
       case "trash":
@@ -312,6 +327,7 @@ async function executeActions(userId: string, message: Message, rule: CompiledRu
         const known = await db.query.folders.findMany({ where: eq(folders.accountId, owned.account.id) });
         const found = known.find((f) => f.path.toLowerCase() === target.toLowerCase() || f.name.toLowerCase() === target.toLowerCase());
         if (found) {
+          if (found.id === owned.folder.id) return; // 已在目标文件夹，无需移动
           await moveMessages(userId, [message.id], { folderId: found.id });
         } else {
           await enqueueRawOperation(owned.account.id, { type: "create_folder", folder: target }, []);
@@ -330,10 +346,11 @@ export async function applyRulesToMessage(accountId: string, messageId: string):
   const account = await db.query.mailAccounts.findFirst({ where: eq(mailAccounts.id, accountId) });
   const message = await db.query.messages.findFirst({ where: eq(messages.id, messageId) });
   if (!account || !message) return [];
-  const active = await db.query.rules.findMany({
-    where: and(eq(rules.userId, account.userId), eq(rules.enabled, true), or(isNull(rules.accountId), eq(rules.accountId, accountId))),
+  const enabledRules = await db.query.rules.findMany({
+    where: and(eq(rules.userId, account.userId), eq(rules.enabled, true)),
     orderBy: [asc(rules.createdAt)],
   });
+  const active = enabledRules.filter((r) => ruleAppliesTo(r, accountId)); // 适用该账号的（含"所有邮箱"与多邮箱里含它的）
   if (active.length === 0) return [];
   // 强规则（确定规则）优先于 AI 分类规则；同层保持创建顺序（V8 稳定排序）
   const ordered = [...active].sort((a, b) => Number(isStrongRule(b.compiled)) - Number(isStrongRule(a.compiled)));
@@ -367,18 +384,29 @@ export interface RulePreviewItem {
   date: string | null;
 }
 
-/** 在最近的收件箱邮件上试算规则（不执行动作） */
-export async function previewRule(userId: string, compiled: CompiledRule, limit = 300): Promise<{ scanned: number; matches: RulePreviewItem[] }> {
+// 规则执行 / 试算的扫描范围：收件箱 + 用户/AI 分类文件夹；排除 已发送/草稿/已删除/垃圾/归档/全部邮件 等系统文件夹。
+// 只扫收件箱会漏掉「已被 AI 规则归到 Newsletter 等文件夹」的邮件——后加的强规则就够不着它们，也无法把错分的邮件捞回来。
+const NON_SCAN_ROLES = new Set<string>(["sent", "drafts", "trash", "junk", "archive", "all"]);
+/** scope=inbox：只收件箱（日常/稳定期，不回头动已分类的）；scope=all：收件箱 + 各分类文件夹（实验期纠错，能捞回错分的） */
+async function scanFolderIds(userId: string, scope: "inbox" | "all" = "all"): Promise<string[]> {
   const db = await getDb();
   const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
-  if (accounts.length === 0) return { scanned: 0, matches: [] };
-  const inboxes = await db.query.folders.findMany({ where: and(inArray(folders.accountId, accounts.map((a) => a.id)), eq(folders.role, "inbox")) });
-  if (inboxes.length === 0) return { scanned: 0, matches: [] };
+  if (accounts.length === 0) return [];
+  const fs = await db.query.folders.findMany({ where: inArray(folders.accountId, accounts.map((a) => a.id)) });
+  if (scope === "inbox") return fs.filter((f) => f.role === "inbox").map((f) => f.id);
+  return fs.filter((f) => !NON_SCAN_ROLES.has(f.role ?? "other")).map((f) => f.id);
+}
+
+/** 在最近的邮件（收件箱 + 分类文件夹）上试算规则（不执行动作） */
+export async function previewRule(userId: string, compiled: CompiledRule, limit = 500): Promise<{ scanned: number; matches: RulePreviewItem[] }> {
+  const db = await getDb();
+  const folderIds = await scanFolderIds(userId);
+  if (folderIds.length === 0) return { scanned: 0, matches: [] };
   const rows = await db
     .select({ message: messages, ai: aiAnnotations })
     .from(messages)
     .leftJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
-    .where(inArray(messages.folderId, inboxes.map((f) => f.id)))
+    .where(inArray(messages.folderId, folderIds))
     .orderBy(desc(messages.date))
     .limit(limit);
   const matches = rows
@@ -395,19 +423,16 @@ export async function previewRule(userId: string, compiled: CompiledRule, limit 
 }
 
 /** 一次拉取最近收件箱邮件，对多条规则各自统计命中数（批量预览用，避免逐条重复扫描） */
-export async function previewRules(userId: string, list: CompiledRule[], limit = 300): Promise<{ scanned: number; counts: number[] }> {
+export async function previewRules(userId: string, list: CompiledRule[], limit = 500): Promise<{ scanned: number; counts: number[] }> {
   const db = await getDb();
   if (list.length === 0) return { scanned: 0, counts: [] };
-  const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
-  const inboxes = accounts.length
-    ? await db.query.folders.findMany({ where: and(inArray(folders.accountId, accounts.map((a) => a.id)), eq(folders.role, "inbox")) })
-    : [];
-  if (inboxes.length === 0) return { scanned: 0, counts: list.map(() => 0) };
+  const folderIds = await scanFolderIds(userId);
+  if (folderIds.length === 0) return { scanned: 0, counts: list.map(() => 0) };
   const rows = await db
     .select({ message: messages, ai: aiAnnotations })
     .from(messages)
     .leftJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
-    .where(inArray(messages.folderId, inboxes.map((f) => f.id)))
+    .where(inArray(messages.folderId, folderIds))
     .orderBy(desc(messages.date))
     .limit(limit);
   const ctxs = rows.map(({ message, ai }) => messageContext(message, ai));
@@ -415,35 +440,40 @@ export async function previewRules(userId: string, list: CompiledRule[], limit =
   return { scanned: rows.length, counts };
 }
 
-/** 对已有邮件立即执行某条规则 */
-export async function runRuleNow(userId: string, ruleId: string, limit = 300): Promise<number> {
+/** 对已有邮件立即执行某条规则（扫描收件箱 + 分类文件夹，可把错分的邮件捞回来） */
+export async function runRuleNow(userId: string, ruleId: string, limit = 2000): Promise<number> {
   const db = await getDb();
   const rule = await db.query.rules.findFirst({ where: and(eq(rules.id, ruleId), eq(rules.userId, userId)) });
   if (!rule) throw new Error("规则不存在");
   const preview = await previewRule(userId, rule.compiled, limit);
+  let applied = 0;
   for (const m of preview.matches) {
-    if (rule.accountId && rule.accountId !== m.accountId) continue;
+    if (!ruleAppliesTo(rule, m.accountId)) continue; // 只对规则适用的账号执行
     const message = await db.query.messages.findFirst({ where: eq(messages.id, m.messageId) });
-    if (message) await executeActions(userId, message, rule.compiled);
+    if (message) {
+      await executeActions(userId, message, rule.compiled);
+      applied += 1;
+    }
   }
   await db
     .update(rules)
-    .set({ runCount: rule.runCount + preview.matches.length, lastRunAt: new Date() })
+    .set({ runCount: rule.runCount + applied, lastRunAt: new Date() })
     .where(eq(rules.id, ruleId));
-  return preview.matches.length;
+  return applied;
 }
 
-/** 一键把**所有启用的规则**跑一遍存量邮件（每个账号最近 limit 封收件箱，按新邮件同样的逻辑逐封处理） */
-export async function runAllRules(userId: string, limit = 300): Promise<{ scanned: number; applied: number }> {
+/**
+ * 一键把**所有启用的规则**跑一遍存量邮件（最近 limit 封，按新邮件同样的逻辑逐封处理；强规则优先）。
+ * scope=all：收件箱 + 各分类文件夹（实验期纠错，能纠正 AI 规则的错分）；scope=inbox：只收件箱（日常，不动已分类的）。
+ */
+export async function runAllRules(userId: string, scope: "inbox" | "all" = "all", limit = 1000): Promise<{ scanned: number; applied: number }> {
   const db = await getDb();
-  const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
-  if (accounts.length === 0) return { scanned: 0, applied: 0 };
-  const inboxes = await db.query.folders.findMany({ where: and(inArray(folders.accountId, accounts.map((a) => a.id)), eq(folders.role, "inbox")) });
-  if (inboxes.length === 0) return { scanned: 0, applied: 0 };
+  const folderIds = await scanFolderIds(userId, scope);
+  if (folderIds.length === 0) return { scanned: 0, applied: 0 };
   const rows = await db
     .select({ id: messages.id, accountId: messages.accountId })
     .from(messages)
-    .where(inArray(messages.folderId, inboxes.map((f) => f.id)))
+    .where(inArray(messages.folderId, folderIds))
     .orderBy(desc(messages.date))
     .limit(limit);
   let applied = 0;
@@ -660,13 +690,13 @@ const STRONG_ONLY_FIELDS = new Set<RuleCondition["field"]>(["from", "to", "subje
  * 关键是「接地」：先从邮箱聚合出真实发件人（含指令里点名的人，即使不高频也纳入）与域名清单，
  * 连同现有文件夹一起作为证据给 AI，要求它只用真实值起草；结果仍进审核区供用户确认 / 修改。
  */
-export async function draftStrongRules(userId: string, instruction: string, accountId?: string | null): Promise<RuleSuggestion[]> {
+export async function draftStrongRules(userId: string, instruction: string, accountIds: string[] = []): Promise<RuleSuggestion[]> {
   const text = instruction.trim();
   if (!text) throw new Error("请先用一句话描述你想要的规则目标");
   const db = await getDb();
   const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
   if (accounts.length === 0) throw new Error("还没有邮箱账号");
-  const accIds = (accountId ? accounts.filter((a) => a.id === accountId) : accounts).map((a) => a.id);
+  const accIds = (accountIds.length ? accounts.filter((a) => accountIds.includes(a.id)) : accounts).map((a) => a.id);
   if (accIds.length === 0) throw new Error("指定的账号不存在");
 
   // 真实发件人清单（接地证据）：按出现频次聚合地址
@@ -743,24 +773,24 @@ export async function listRules(userId: string): Promise<Rule[]> {
   return db.query.rules.findMany({ where: eq(rules.userId, userId), orderBy: [asc(rules.createdAt)] });
 }
 
-export async function createRule(userId: string, input: { naturalText: string; compiled: CompiledRule; accountId?: string | null }): Promise<Rule> {
+export async function createRule(userId: string, input: { naturalText: string; compiled: CompiledRule; accountIds?: string[] }): Promise<Rule> {
   const db = await getDb();
   const [row] = await db
     .insert(rules)
-    .values({ userId, accountId: input.accountId ?? null, name: input.compiled.name, naturalText: input.naturalText, compiled: input.compiled })
+    .values({ userId, accountIds: input.accountIds ?? [], name: input.compiled.name, naturalText: input.naturalText, compiled: input.compiled })
     .returning();
   return row;
 }
 
-/** 批量创建规则（批量导入用） */
-export async function createRules(userId: string, items: Array<{ naturalText: string; compiled: CompiledRule }>, accountId?: string | null): Promise<number> {
+/** 批量创建规则（批量导入用）；accountIds 空数组 = 对所有邮箱生效 */
+export async function createRules(userId: string, items: Array<{ naturalText: string; compiled: CompiledRule }>, accountIds?: string[]): Promise<number> {
   if (items.length === 0) return 0;
   const db = await getDb();
-  await db.insert(rules).values(items.map((it) => ({ userId, accountId: accountId ?? null, name: it.compiled.name, naturalText: it.naturalText, compiled: it.compiled })));
+  await db.insert(rules).values(items.map((it) => ({ userId, accountIds: accountIds ?? [], name: it.compiled.name, naturalText: it.naturalText, compiled: it.compiled })));
   return items.length;
 }
 
-export async function updateRule(userId: string, ruleId: string, patch: { enabled?: boolean; name?: string; compiled?: CompiledRule; accountId?: string | null; naturalText?: string }): Promise<void> {
+export async function updateRule(userId: string, ruleId: string, patch: { enabled?: boolean; name?: string; compiled?: CompiledRule; accountId?: string | null; accountIds?: string[]; naturalText?: string }): Promise<void> {
   const db = await getDb();
   await db
     .update(rules)

@@ -452,8 +452,10 @@ export const rules = pgTable("rules", {
   userId: uuid("user_id")
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
-  /** 为空表示对所有账号生效 */
+  /** 旧字段（单账号）：保留向后兼容，读取时作为 accountIds 为空时的回退；新规则不再写它 */
   accountId: uuid("account_id").references(() => mailAccounts.id, { onDelete: "cascade" }),
+  /** 适用账号 id 列表；空数组 = 对所有邮箱生效。可指定其中几个邮箱 */
+  accountIds: jsonb("account_ids").$type<string[]>().notNull().default([]),
   name: text("name").notNull(),
   naturalText: text("natural_text").notNull(),
   compiled: jsonb("compiled").$type<CompiledRule>().notNull(),
@@ -512,8 +514,6 @@ export interface AiSettingsData {
   roles: Partial<Record<AiRole, AiRoleConfig>>;
   preset: "quality" | "balanced" | "economy" | "custom";
   customProviders: AiCustomProvider[];
-  /** 分类结果写回服务器：Gmail 标签 / IMAP 复制到 AI/<类别> 文件夹 */
-  writeBack: { gmailLabels: boolean; imapFolders: boolean };
   /** 自动分析范围：只收件箱 / 全部文件夹 */
   autoTriageScope: "inbox" | "all";
   /** 邮件翻译目标语言（可增删，默认 中/英/德） */

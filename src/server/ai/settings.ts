@@ -39,7 +39,6 @@ export const DEFAULT_SETTINGS: AiSettingsData = {
   roles: {},
   preset: "quality",
   customProviders: [],
-  writeBack: { gmailLabels: true, imapFolders: false },
   autoTriageScope: "inbox",
   translationLangs: DEFAULT_TRANSLATION_LANGS,
   autoTranslateEnglish: true,
@@ -101,7 +100,6 @@ function normalize(data: Partial<AiSettingsData> | undefined): AiSettingsData {
   merged.candidates = { ...(data?.candidates ?? {}) };
   merged.roles = { ...(data?.roles ?? {}) };
   merged.customProviders = [...(data?.customProviders ?? [])];
-  merged.writeBack = { ...DEFAULT_SETTINGS.writeBack, ...(data?.writeBack ?? {}) };
   merged.translationLangs = data?.translationLangs?.length ? [...data.translationLangs] : [...DEFAULT_TRANSLATION_LANGS];
   merged.dailyDigest = { ...DEFAULT_SETTINGS.dailyDigest, ...(data?.dailyDigest ?? {}) };
   // 内置厂商没有候选池时用兜底列表填充

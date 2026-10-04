@@ -24,18 +24,6 @@ export const CATEGORY_LABELS: Record<Category, string> = {
 };
 
 /** Gmail 标签名用 ASCII，避免 IMAP 修改版 UTF-7 编码问题 */
-export const CATEGORY_LABEL_NAMES: Record<Category, string> = {
-  important: "AI/Important",
-  todo: "AI/Todo",
-  notification: "AI/Notification",
-  billing: "AI/Billing",
-  newsletter: "AI/Newsletter",
-  promotion: "AI/Promotion",
-  social: "AI/Social",
-  personal: "AI/Personal",
-  other: "AI/Other",
-};
-
 // schema 尽量宽容：DeepSeek 等厂商可能少字段 / 类型不符 / 值超范围，用 .catch/.nullish 兜底避免整体失败
 export const triageSchema = z.object({
   category: z.enum(CATEGORIES).catch("other"),
