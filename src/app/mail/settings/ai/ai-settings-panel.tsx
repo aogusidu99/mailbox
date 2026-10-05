@@ -50,6 +50,7 @@ export function AiSettingsPanel({
   const [pending, start] = useTransition();
   const [custom, setCustom] = useState({ id: "", name: "", baseUrl: "", apiKeyHint: "" });
   const [backfillLimit, setBackfillLimit] = useState(100);
+  const [allBackfill, setAllBackfill] = useState(false); // 勾选 = 对所有已获取邮件回填（不限封数）
   const [langInput, setLangInput] = useState({ code: "", label: "" });
   const translationLangs = view.data.translationLangs ?? [];
 
@@ -392,44 +393,48 @@ export function AiSettingsPanel({
               <option value="all">所有文件夹</option>
             </select>
           </label>
-          <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-            <span>对已有邮件回填分析：最近</span>
-            <Input type="number" className="w-24" value={backfillLimit} onChange={(e) => setBackfillLimit(Number(e.target.value) || 50)} />
-            <span>封</span>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pending || accounts.length === 0}
-              onClick={() =>
-                start(async () => {
-                  const r = await backfillTriageAction(null, backfillLimit);
-                  if (r.ok) toast.success(`已加入队列：${r.data} 封`);
-                  else toast.error(r.error);
-                })
-              }
-            >
-              {pending ? <Loader2 className="size-4 animate-spin" /> : null} 开始回填
-            </Button>
-            <span className="text-xs text-muted-foreground">
-              账号：{accounts.map((a) => `${a.email}${a.aiEnabled ? "" : "（AI 未开启）"}`).join("、") || "无"}
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span>语义搜索向量回填（需先为「语义搜索向量」等级选好模型）：</span>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pending || !view.data.roles.embedding?.model}
-              onClick={() =>
-                start(async () => {
-                  const r = await backfillEmbeddingsAction(500);
-                  if (r.ok) toast.success(`已加入队列：${r.data} 封`);
-                  else toast.error(r.error);
-                })
-              }
-            >
-              回填最近 500 封
-            </Button>
+          <div className="space-y-2 border-t pt-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span>对已有邮件回填：最近</span>
+              <Input type="number" className="w-24" value={backfillLimit} disabled={allBackfill} onChange={(e) => setBackfillLimit(Number(e.target.value) || 50)} />
+              <span>封</span>
+              <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                <input type="checkbox" className="size-3.5" checked={allBackfill} onChange={(e) => setAllBackfill(e.target.checked)} /> 全部已获取
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending || accounts.length === 0}
+                onClick={() =>
+                  start(async () => {
+                    const r = await backfillTriageAction(null, allBackfill ? 0 : backfillLimit);
+                    if (r.ok) toast.success(`已加入队列：${r.data} 封`);
+                    else toast.error(r.error);
+                  })
+                }
+              >
+                {pending ? <Loader2 className="size-4 animate-spin" /> : null} 回填 AI 分类
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending || !view.data.roles.embedding?.model}
+                title={view.data.roles.embedding?.model ? "" : "需先为「语义搜索向量」等级选好模型"}
+                onClick={() =>
+                  start(async () => {
+                    const r = await backfillEmbeddingsAction(allBackfill ? 0 : backfillLimit);
+                    if (r.ok) toast.success(`已加入队列：${r.data} 封`);
+                    else toast.error(r.error);
+                  })
+                }
+              >
+                回填语义向量
+              </Button>
+              <span className="text-xs text-muted-foreground">{allBackfill ? "将回填所有已获取邮件" : `将回填最近 ${backfillLimit} 封`}</span>
+            </div>
+            <span className="text-xs text-muted-foreground">账号：{accounts.map((a) => `${a.email}${a.aiEnabled ? "" : "（AI 未开启）"}`).join("、") || "无"}</span>
           </div>
         </CardContent>
       </Card>

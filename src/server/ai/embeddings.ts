@@ -125,7 +125,7 @@ export async function semanticSearch(userId: string, query: string, opts: { acco
     .filter((x): x is SemanticHit => x !== null);
 }
 
-/** 回填：给最近 limit 封还没有向量的邮件入队 */
+/** 回填：给最近 limit 封还没有向量的邮件入队；limit<=0 = 全部已获取 */
 export async function backfillEmbeddings(userId: string, limit = 500): Promise<number> {
   const db = await getDb();
   const settings = await loadAiSettings(userId);
@@ -133,13 +133,13 @@ export async function backfillEmbeddings(userId: string, limit = 500): Promise<n
   const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
   let queued = 0;
   for (const account of accounts) {
-    const rows = await db
+    const base = db
       .select({ id: messages.id })
       .from(messages)
       .leftJoin(messageEmbeddings, and(eq(messageEmbeddings.messageId, messages.id), eq(messageEmbeddings.chunkIndex, 0)))
       .where(and(eq(messages.accountId, account.id), isNull(messageEmbeddings.id)))
-      .orderBy(desc(messages.date))
-      .limit(limit);
+      .orderBy(desc(messages.date));
+    const rows = await (limit > 0 ? base.limit(limit) : base);
     for (const r of rows) {
       await enqueueAiEmbed(account.id, r.id);
       queued += 1;

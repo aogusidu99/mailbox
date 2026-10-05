@@ -397,18 +397,23 @@ async function scanFolderIds(userId: string, scope: "inbox" | "all" = "all"): Pr
   return fs.filter((f) => !NON_SCAN_ROLES.has(f.role ?? "other")).map((f) => f.id);
 }
 
-/** 在最近的邮件（收件箱 + 分类文件夹）上试算规则（不执行动作） */
-export async function previewRule(userId: string, compiled: CompiledRule, limit = 500): Promise<{ scanned: number; matches: RulePreviewItem[] }> {
+/** 按扫描范围拉邮件 + AI 标注；limit<=0 = 不限（软件中所有已获取的这些文件夹里的邮件） */
+async function scanMessageRows(folderIds: string[], limit: number) {
   const db = await getDb();
-  const folderIds = await scanFolderIds(userId);
-  if (folderIds.length === 0) return { scanned: 0, matches: [] };
-  const rows = await db
+  const base = db
     .select({ message: messages, ai: aiAnnotations })
     .from(messages)
     .leftJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
     .where(inArray(messages.folderId, folderIds))
-    .orderBy(desc(messages.date))
-    .limit(limit);
+    .orderBy(desc(messages.date));
+  return limit > 0 ? base.limit(limit) : base;
+}
+
+/** 在最近的邮件（收件箱 + 分类文件夹）上试算规则（不执行动作）；limit<=0 = 全部已获取 */
+export async function previewRule(userId: string, compiled: CompiledRule, limit = 500): Promise<{ scanned: number; matches: RulePreviewItem[] }> {
+  const folderIds = await scanFolderIds(userId);
+  if (folderIds.length === 0) return { scanned: 0, matches: [] };
+  const rows = await scanMessageRows(folderIds, limit);
   const matches = rows
     .filter(({ message, ai }) => evaluateRule(compiled, messageContext(message, ai)))
     .map(({ message: m }) => ({
@@ -424,17 +429,10 @@ export async function previewRule(userId: string, compiled: CompiledRule, limit 
 
 /** 一次拉取最近收件箱邮件，对多条规则各自统计命中数（批量预览用，避免逐条重复扫描） */
 export async function previewRules(userId: string, list: CompiledRule[], limit = 500): Promise<{ scanned: number; counts: number[] }> {
-  const db = await getDb();
   if (list.length === 0) return { scanned: 0, counts: [] };
   const folderIds = await scanFolderIds(userId);
   if (folderIds.length === 0) return { scanned: 0, counts: list.map(() => 0) };
-  const rows = await db
-    .select({ message: messages, ai: aiAnnotations })
-    .from(messages)
-    .leftJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
-    .where(inArray(messages.folderId, folderIds))
-    .orderBy(desc(messages.date))
-    .limit(limit);
+  const rows = await scanMessageRows(folderIds, limit);
   const ctxs = rows.map(({ message, ai }) => messageContext(message, ai));
   const counts = list.map((rule) => ctxs.filter((ctx) => evaluateRule(rule, ctx)).length);
   return { scanned: rows.length, counts };
@@ -463,19 +461,19 @@ export async function runRuleNow(userId: string, ruleId: string, limit = 2000): 
 }
 
 /**
- * 一键把**所有启用的规则**跑一遍存量邮件（最近 limit 封，按新邮件同样的逻辑逐封处理；强规则优先）。
+ * 一键把**所有启用的规则**跑一遍存量邮件（最近 limit 封，limit<=0 = 全部已获取；强规则优先）。
  * scope=all：收件箱 + 各分类文件夹（实验期纠错，能纠正 AI 规则的错分）；scope=inbox：只收件箱（日常，不动已分类的）。
  */
 export async function runAllRules(userId: string, scope: "inbox" | "all" = "all", limit = 1000): Promise<{ scanned: number; applied: number }> {
   const db = await getDb();
   const folderIds = await scanFolderIds(userId, scope);
   if (folderIds.length === 0) return { scanned: 0, applied: 0 };
-  const rows = await db
+  const base = db
     .select({ id: messages.id, accountId: messages.accountId })
     .from(messages)
     .where(inArray(messages.folderId, folderIds))
-    .orderBy(desc(messages.date))
-    .limit(limit);
+    .orderBy(desc(messages.date));
+  const rows = await (limit > 0 ? base.limit(limit) : base);
   let applied = 0;
   for (const m of rows) {
     const hits = await applyRulesToMessage(m.accountId, m.id).catch(() => [] as string[]);
@@ -542,12 +540,12 @@ export async function suggestStrongRules(userId: string, limit = 10000): Promise
 
   const allFolders = await db.query.folders.findMany({ where: inArray(folders.accountId, accIds) });
   const folderById = new Map(allFolders.map((f) => [f.id, f]));
-  const rows = await db
+  const suggestBase = db
     .select({ from: messages.fromAddrs, folderId: messages.folderId, subject: messages.subject })
     .from(messages)
     .where(inArray(messages.accountId, accIds))
-    .orderBy(desc(messages.date))
-    .limit(limit);
+    .orderBy(desc(messages.date));
+  const rows = await (limit > 0 ? suggestBase.limit(limit) : suggestBase); // limit<=0 = 全部已获取
 
   type Stat = { total: number; inbox: number; byFolder: Map<string, number>; display: string; folderSubs: string[]; inboxSubs: string[] };
   const bySender = new Map<string, Stat>();
@@ -690,7 +688,7 @@ const STRONG_ONLY_FIELDS = new Set<RuleCondition["field"]>(["from", "to", "subje
  * 关键是「接地」：先从邮箱聚合出真实发件人（含指令里点名的人，即使不高频也纳入）与域名清单，
  * 连同现有文件夹一起作为证据给 AI，要求它只用真实值起草；结果仍进审核区供用户确认 / 修改。
  */
-export async function draftStrongRules(userId: string, instruction: string, accountIds: string[] = []): Promise<RuleSuggestion[]> {
+export async function draftStrongRules(userId: string, instruction: string, accountIds: string[] = [], limit = 8000): Promise<RuleSuggestion[]> {
   const text = instruction.trim();
   if (!text) throw new Error("请先用一句话描述你想要的规则目标");
   const db = await getDb();
@@ -699,13 +697,13 @@ export async function draftStrongRules(userId: string, instruction: string, acco
   const accIds = (accountIds.length ? accounts.filter((a) => accountIds.includes(a.id)) : accounts).map((a) => a.id);
   if (accIds.length === 0) throw new Error("指定的账号不存在");
 
-  // 真实发件人清单（接地证据）：按出现频次聚合地址
-  const rows = await db
+  // 真实发件人清单（接地证据）：按出现频次聚合地址；limit<=0 = 全部已获取
+  const draftBase = db
     .select({ from: messages.fromAddrs })
     .from(messages)
     .where(inArray(messages.accountId, accIds))
-    .orderBy(desc(messages.date))
-    .limit(8000);
+    .orderBy(desc(messages.date));
+  const rows = await (limit > 0 ? draftBase.limit(limit) : draftBase);
   const bySender = new Map<string, { display: string; count: number }>();
   const byDomain = new Map<string, number>();
   for (const r of rows) {

@@ -30,10 +30,10 @@ export async function compileRuleAction(naturalText: string) {
   });
 }
 
-export async function previewRuleAction(compiled: unknown) {
+export async function previewRuleAction(compiled: unknown, limit = 500) {
   return run(async () => {
     const user = await requireUser();
-    return previewRule(user.id, normalize(compiled));
+    return previewRule(user.id, normalize(compiled), limit);
   });
 }
 
@@ -47,13 +47,13 @@ export async function createRuleAction(input: { naturalText: string; compiled: u
 }
 
 /** 批量编译：每行一条 → 逐行编译 + 一次性试算命中数 */
-export async function compileRulesAction(text: string) {
+export async function compileRulesAction(text: string, limit = 500) {
   return run(async () => {
     const user = await requireUser();
     const t = text.trim();
     if (!t) throw new Error("请粘贴规则（每行一条）");
     const { items, errors } = await compileRules(user.id, t);
-    const preview = await previewRules(user.id, items.map((it) => it.compiled));
+    const preview = await previewRules(user.id, items.map((it) => it.compiled), limit);
     return {
       scanned: preview.scanned,
       items: items.map((it, i) => ({ naturalText: it.naturalText, compiled: it.compiled, matchCount: preview.counts[i] ?? 0 })),
@@ -100,21 +100,21 @@ export async function deleteRuleAction(ruleId: string) {
   });
 }
 
-export async function runRuleNowAction(ruleId: string) {
+export async function runRuleNowAction(ruleId: string, limit = 2000) {
   return run(async () => {
     const user = await requireUser();
-    const n = await runRuleNow(user.id, ruleId);
+    const n = await runRuleNow(user.id, ruleId, limit);
     revalidatePath("/mail/settings/rules");
     return { applied: n };
   });
 }
 
 /** 从现有邮件分布归纳强规则建议（按发件人 → 文件夹），返回与批量审核同样的结构供编辑/保存 */
-export async function suggestStrongRulesAction() {
+export async function suggestStrongRulesAction(limit = 10000) {
   return run(async () => {
     const user = await requireUser();
-    const suggestions = await suggestStrongRules(user.id);
-    const preview = await previewRules(user.id, suggestions.map((s) => s.compiled));
+    const suggestions = await suggestStrongRules(user.id, limit);
+    const preview = await previewRules(user.id, suggestions.map((s) => s.compiled), limit);
     return {
       scanned: preview.scanned,
       items: suggestions.map((s, i) => ({ naturalText: s.reason, compiled: s.compiled, matchCount: preview.counts[i] ?? 0 })),
@@ -124,13 +124,13 @@ export async function suggestStrongRulesAction() {
 }
 
 /** 用自然语言目标 + 邮箱真实数据，让 AI 起草强规则（读邮箱接地），返回与批量审核同样的结构 */
-export async function draftStrongRulesAction(instruction: string, accountIds: string[] = []) {
+export async function draftStrongRulesAction(instruction: string, accountIds: string[] = [], limit = 8000) {
   return run(async () => {
     const user = await requireUser();
     const t = instruction.trim();
     if (!t) throw new Error("请先用一句话描述你想要的规则目标");
-    const suggestions = await draftStrongRules(user.id, t, accountIds);
-    const preview = await previewRules(user.id, suggestions.map((s) => s.compiled));
+    const suggestions = await draftStrongRules(user.id, t, accountIds, limit);
+    const preview = await previewRules(user.id, suggestions.map((s) => s.compiled), limit);
     return {
       scanned: preview.scanned,
       items: suggestions.map((s, i) => ({ naturalText: s.reason, compiled: s.compiled, matchCount: preview.counts[i] ?? 0 })),
@@ -140,10 +140,10 @@ export async function draftStrongRulesAction(instruction: string, accountIds: st
 }
 
 /** 一键把所有启用的规则跑一遍存量邮件；scope=inbox 只收件箱（日常），scope=all 含已分类文件夹（纠错） */
-export async function runAllRulesAction(scope: "inbox" | "all" = "all") {
+export async function runAllRulesAction(scope: "inbox" | "all" = "all", limit = 1000) {
   return run(async () => {
     const user = await requireUser();
-    const r = await runAllRules(user.id, scope);
+    const r = await runAllRules(user.id, scope, limit);
     revalidatePath("/mail/settings/rules");
     return r;
   });

@@ -90,13 +90,13 @@ export async function backfillTriage(userId: string, accountId: string | null, l
     if (accountId && account.id !== accountId) continue;
     const inbox = await db.query.folders.findFirst({ where: and(eq(folders.accountId, account.id), eq(folders.role, "inbox")) });
     if (!inbox) continue;
-    const rows = await db
+    const base = db
       .select({ id: messages.id })
       .from(messages)
       .leftJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
       .where(and(eq(messages.folderId, inbox.id), isNull(aiAnnotations.id)))
-      .orderBy(desc(messages.date))
-      .limit(limit);
+      .orderBy(desc(messages.date));
+    const rows = await (limit > 0 ? base.limit(limit) : base); // limit<=0 = 全部已获取（未分析的）
     for (const r of rows) {
       await enqueueAiTriage(account.id, r.id);
       queued += 1;

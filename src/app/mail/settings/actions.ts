@@ -194,6 +194,6 @@ export async function saveDailyDigestAction(patch: Partial<AiSettingsData["daily
 export async function backfillTriageAction(accountId: string | null, limit: number) {
   return run(async () => {
     const user = await requireUser();
-    return backfillTriage(user.id, accountId, Math.min(Math.max(1, limit), 500));
+    return backfillTriage(user.id, accountId, limit <= 0 ? 0 : Math.max(1, limit)); // <=0 = 全部已获取（未分析的）
   });
 }

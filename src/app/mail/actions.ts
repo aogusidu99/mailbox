@@ -162,7 +162,7 @@ export async function backfillEmbeddingsAction(limit: number) {
   return run(async () => {
     const user = await requireUser();
     const { backfillEmbeddings } = await import("@/server/ai/embeddings");
-    return backfillEmbeddings(user.id, Math.min(Math.max(1, limit), 2000));
+    return backfillEmbeddings(user.id, limit <= 0 ? 0 : Math.max(1, limit)); // <=0 = 全部已获取
   });
 }
 

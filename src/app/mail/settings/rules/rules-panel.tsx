@@ -141,6 +141,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const [groupKey, setGroupKey] = useState<GroupKey>("none");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set()); // 已折叠的分组 key
   const [runScope, setRunScope] = useState<"all" | "inbox">("all"); // 全部立即执行的范围：含已分类纠错 / 只收件箱
+  const [scanLimit, setScanLimit] = useState<number>(2000); // 处理/试算扫描封数（0=全部已获取）；统一驱动 试算/立即执行/总结/起草
 
   // 适用邮箱标签：空=所有邮箱；单个=邮箱名；多个=逗号拼接
   const accountScopeLabel = useCallback((ids: string[]) => (ids.length === 0 ? "所有邮箱" : ids.map((id) => accounts.find((a) => a.id === id)?.email ?? "已删除账号").join("、")), [accounts]);
@@ -228,7 +229,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const rePreview = () =>
     start(async () => {
       if (!draftRule) return;
-      const r = await previewRuleAction(draftRule);
+      const r = await previewRuleAction(draftRule, scanLimit);
       if (!r.ok) {
         toast.error(r.error);
         return;
@@ -253,7 +254,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
 
   const compileBatch = () =>
     start(async () => {
-      const r = await compileRulesAction(batchText);
+      const r = await compileRulesAction(batchText, scanLimit);
       if (!r.ok) {
         toast.error(r.error);
         return;
@@ -270,7 +271,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
         toast.error("请先在上面的输入框里描述你想要的规则目标");
         return;
       }
-      const r = await draftStrongRulesAction(t, batchAccountIds);
+      const r = await draftStrongRulesAction(t, batchAccountIds, scanLimit);
       if (!r.ok) {
         toast.error(r.error);
         return;
@@ -287,7 +288,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   // 从现有邮件分布归纳强规则建议（按发件人→文件夹），结果进入下方审核区
   const suggestRules = () =>
     start(async () => {
-      const r = await suggestStrongRulesAction();
+      const r = await suggestStrongRulesAction(scanLimit);
       if (!r.ok) {
         toast.error(r.error);
         return;
@@ -307,7 +308,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
   const rePreviewBatchItem = (i: number) =>
     start(async () => {
       if (!batchDraft) return;
-      const r = await previewRuleAction(batchDraft.items[i].compiled);
+      const r = await previewRuleAction(batchDraft.items[i].compiled, scanLimit);
       if (!r.ok) {
         toast.error(r.error);
         return;
@@ -453,26 +454,34 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
         <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
           <div>
             <CardTitle>已有规则（{filtersActive ? `${shownCount} / ${initialRules.length}` : initialRules.length}）</CardTitle>
-            <CardDescription><strong>强规则优先</strong>执行、AI 规则兜底；某封被强规则归档 / 移动后，AI 规则不再重复处理它。新邮件到达时<strong>只处理收件箱</strong>、不动已分类的。手动「全部立即执行」可选范围：<strong>含已分类文件夹（纠错）</strong>——把错分的邮件捞回；或<strong>只收件箱（日常）</strong>。</CardDescription>
+            <CardDescription><strong>强规则优先</strong>执行、AI 规则兜底；某封被强规则归档 / 移动后，AI 规则不再重复处理它。新邮件到达时<strong>只处理收件箱</strong>、不动已分类的。手动「全部立即执行」可选范围：<strong>含已分类文件夹（纠错）</strong>或<strong>只收件箱（日常）</strong>。右侧「<strong>扫描封数</strong>」统一控制 试算 / 立即执行 / 总结强规则 / AI 起草 处理多少封邮件，可选<strong>全部已获取</strong>。</CardDescription>
           </div>
           {initialRules.length ? (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <select aria-label="执行范围" className={SELECT_CLS} value={runScope} onChange={(e) => setRunScope(e.target.value as "all" | "inbox")} disabled={pending}>
                 <option value="all">含已分类文件夹（纠错）</option>
                 <option value="inbox">只收件箱（日常）</option>
+              </select>
+              <select aria-label="扫描封数" title="试算 / 立即执行 / 总结 / 起草 都用这个封数" className={SELECT_CLS} value={scanLimit} onChange={(e) => setScanLimit(Number(e.target.value))} disabled={pending}>
+                <option value={500}>最近 500 封</option>
+                <option value={1000}>最近 1000 封</option>
+                <option value={2000}>最近 2000 封</option>
+                <option value={5000}>最近 5000 封</option>
+                <option value={0}>全部已获取</option>
               </select>
               <Button
                 size="sm"
                 variant="outline"
                 disabled={pending}
                 onClick={() => {
+                  const n = scanLimit > 0 ? `最近约 ${scanLimit} 封` : "全部已获取的";
                   const msg =
                     runScope === "all"
-                      ? "对最近约 1000 封邮件（收件箱 + 各分类文件夹）跑一遍所有启用的规则？强规则优先、会把错分的邮件移到正确文件夹；移动 / 归档 / 删除等立即执行。"
-                      : "对最近约 1000 封收件箱邮件跑一遍所有启用的规则？不会动已分类文件夹里的邮件；移动 / 归档 / 删除等立即执行。";
+                      ? `对${n}邮件（收件箱 + 各分类文件夹）跑一遍所有启用的规则？强规则优先、会把错分的邮件移到正确文件夹；移动 / 归档 / 删除等立即执行。`
+                      : `对${n}收件箱邮件跑一遍所有启用的规则？不会动已分类文件夹里的邮件；移动 / 归档 / 删除等立即执行。`;
                   if (!confirm(msg)) return;
                   act(async () => {
-                    const res = await runAllRulesAction(runScope);
+                    const res = await runAllRulesAction(runScope, scanLimit);
                     if (res.ok) toast.success(`扫描 ${res.data.scanned} 封，命中执行 ${res.data.applied} 次`);
                     return res;
                   });
@@ -587,7 +596,7 @@ export function RulesPanel({ initialRules, accounts }: { initialRules: RuleRow[]
                           <Button size="sm" variant="outline" disabled={pending} aria-label={`编辑规则 ${r.name}`} onClick={() => openEdit(r)}>
                             <Pencil className="size-4" /> 编辑
                           </Button>
-                          <Button size="sm" variant="outline" disabled={pending} onClick={() => act(async () => { const res = await runRuleNowAction(r.id); if (res.ok) toast.success(`已对 ${res.data.applied} 封邮件执行`); return res; })}>
+                          <Button size="sm" variant="outline" disabled={pending} onClick={() => act(async () => { const res = await runRuleNowAction(r.id, scanLimit); if (res.ok) toast.success(`已对 ${res.data.applied} 封邮件执行`); return res; })}>
                             <Play className="size-4" /> 立即执行
                           </Button>
                           <Button size="sm" variant="destructive" disabled={pending} aria-label={`删除规则 ${r.name}`} onClick={() => act(() => deleteRuleAction(r.id), "已删除")}>
