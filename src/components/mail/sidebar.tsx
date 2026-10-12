@@ -224,9 +224,9 @@ export function Sidebar({
                             >
                               <Icon className="size-4 shrink-0 text-muted-foreground" />
                               <span className="min-w-0 flex-1 truncate">{label}</span>
-                              {folder.unreadCount > 0 ? (
-                                <Badge variant="secondary" className="h-5 px-1.5 text-[11px]">
-                                  {folder.unreadCount > 999 ? "999+" : folder.unreadCount}
+                              {folder.localCount > 0 ? (
+                                <Badge variant="secondary" className="h-5 px-1.5 text-[11px]" title={`本地已同步 ${folder.localCount} 封${folder.unreadCount > 0 ? ` · 未读 ${folder.unreadCount}` : ""}`}>
+                                  {folder.localCount > 9999 ? "9999+" : folder.localCount}
                                 </Badge>
                               ) : null}
                             </Link>

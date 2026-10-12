@@ -26,6 +26,16 @@ export async function getSidebarData(userId: string): Promise<SidebarData> {
   });
   if (accounts.length === 0) return { accounts: [] };
   const allFolders = await db.query.folders.findMany({ where: inArray(folders.accountId, accounts.map((a) => a.id)) });
+  // 每个文件夹本地实际已同步的邮件数（一次 GROUP BY 查全部）——徽标显示这个，始终等于打开能看到的条数
+  const localCounts = new Map<string, number>();
+  if (allFolders.length) {
+    const rows = await db
+      .select({ folderId: messages.folderId, c: sql<number>`count(*)::int` })
+      .from(messages)
+      .where(inArray(messages.folderId, allFolders.map((f) => f.id)))
+      .groupBy(messages.folderId);
+    for (const r of rows) localCounts.set(r.folderId, r.c);
+  }
   return {
     accounts: accounts.map((a) => ({
       id: a.id,
@@ -49,6 +59,7 @@ export async function getSidebarData(userId: string): Promise<SidebarData> {
           noSelect: f.noSelect,
           unreadCount: f.unreadCount,
           totalCount: f.totalCount,
+          localCount: localCounts.get(f.id) ?? 0,
         })),
     })),
   };

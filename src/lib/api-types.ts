@@ -13,6 +13,8 @@ export interface SidebarFolder {
   noSelect: boolean;
   unreadCount: number;
   totalCount: number;
+  /** 本地实际已同步的邮件数（= 打开文件夹能看到的条数，侧栏徽标显示这个） */
+  localCount: number;
 }
 
 export interface SidebarAccount {
