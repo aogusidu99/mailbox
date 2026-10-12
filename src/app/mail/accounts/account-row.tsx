@@ -1,8 +1,8 @@
 "use client";
 
-import { Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { History, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { formatFullDate } from "@/lib/format";
-import { deleteAccountAction, resyncAccountAction, toggleAccountAiAction, toggleAccountBccSelfAction } from "./actions";
+import { deleteAccountAction, resyncAccountAction, resyncDeepAction, toggleAccountAiAction, toggleAccountBccSelfAction } from "./actions";
 
 export interface AccountRowData {
   id: string;
@@ -40,11 +40,23 @@ const STATUS_LABEL: Record<string, string> = { idle: "正常", syncing: "同步�
 export function AccountRow({ account }: { account: AccountRowData }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const [deepWin, setDeepWin] = useState<number>(account.syncWindowDays || 365); // 深度同步的目标窗口（天）
 
   const resync = () =>
     start(async () => {
       const r = await resyncAccountAction(account.id);
       if (r.ok) toast.success("已加入同步队列");
+      else toast.error(r.error);
+      router.refresh();
+    });
+
+  // 深度重新同步：按所选窗口把历史邮件补齐（重置后重新初始同步，已存在的不重复）
+  const deepResync = () =>
+    start(async () => {
+      const label = deepWin >= 36500 ? "全部历史" : `最近 ${deepWin} 天`;
+      if (!confirm(`重新把「${label}」的邮件拉下来？会重新同步该邮箱（已有邮件不会重复，可能较慢）。`)) return;
+      const r = await resyncDeepAction(account.id, deepWin);
+      if (r.ok) toast.success("已加入深度同步队列，稍候刷新查看");
       else toast.error(r.error);
       router.refresh();
     });
@@ -105,6 +117,17 @@ export function AccountRow({ account }: { account: AccountRowData }) {
       <Button variant="outline" size="sm" onClick={resync} disabled={pending}>
         {pending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />} 立即同步
       </Button>
+      <div className="flex items-center gap-1" title="把更早的历史邮件补齐：按所选范围重新初始同步（已有邮件不重复）">
+        <select aria-label="深度同步范围" className="h-8 rounded-lg border border-input bg-background px-2 text-sm" value={deepWin} onChange={(e) => setDeepWin(Number(e.target.value))} disabled={pending}>
+          <option value={365}>最近 1 年</option>
+          <option value={1095}>最近 3 年</option>
+          <option value={1825}>最近 5 年</option>
+          <option value={36500}>全部历史</option>
+        </select>
+        <Button variant="outline" size="sm" onClick={deepResync} disabled={pending}>
+          <History className="size-4" /> 深度同步
+        </Button>
+      </div>
       <AlertDialog>
         <AlertDialogTrigger render={<Button variant="destructive" size="sm" disabled={pending} />}>
           <Trash2 className="size-4" /> 移除

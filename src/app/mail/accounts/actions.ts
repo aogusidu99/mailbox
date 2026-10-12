@@ -8,6 +8,7 @@ import {
   createMailAccount,
   deleteMailAccount,
   getAccountForUser,
+  resyncAccountDeep,
   setAccountAi,
   setAccountBccSelf,
   testAccountConnection,
@@ -68,6 +69,18 @@ export async function resyncAccountAction(accountId: string): Promise<ActionResu
     const account = await getAccountForUser(user.id, accountId);
     if (!account) throw new Error("账号不存在");
     await enqueueSyncAccount(accountId, "manual");
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/** 深度重新同步：按新窗口把历史邮件补齐（重置后重新初始同步，已存在的不重复） */
+export async function resyncDeepAction(accountId: string, windowDays: number): Promise<ActionResult> {
+  try {
+    const user = await requireUser();
+    await resyncAccountDeep(user.id, accountId, windowDays);
+    revalidatePath("/mail/accounts");
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err);

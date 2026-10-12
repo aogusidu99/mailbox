@@ -121,6 +121,20 @@ export async function setAccountAi(userId: string, accountId: string, aiEnabled:
     .where(and(eq(mailAccounts.userId, userId), eq(mailAccounts.id, accountId)));
 }
 
+/**
+ * 深度重新同步：改同步窗口 + 把各文件夹的 uidNext 清空（强制重新"初始同步"），再入队。
+ * 用于把历史邮件补齐——初始同步会按新窗口重新拉（抓取上限见 INITIAL_FETCH_LIMIT）。已存在的邮件会跳过、不重复。
+ */
+export async function resyncAccountDeep(userId: string, accountId: string, windowDays: number): Promise<void> {
+  const db = await getDb();
+  const account = await getAccountForUser(userId, accountId);
+  if (!account) throw new Error("账号不存在");
+  const win = Math.max(1, Math.min(windowDays, 36500)); // 1 天 ~ 100 年
+  await db.update(mailAccounts).set({ syncWindowDays: win, initialSyncDone: false }).where(eq(mailAccounts.id, accountId));
+  await db.update(folders).set({ uidNext: null }).where(eq(folders.accountId, accountId)); // 清空 → 下次同步按新窗口重新初始拉取
+  await enqueueSyncAccount(accountId, "manual");
+}
+
 /** 是否在回复邮件时自动密送一份给自己 */
 export async function setAccountBccSelf(userId: string, accountId: string, bccSelfOnReply: boolean): Promise<void> {
   const db = await getDb();
