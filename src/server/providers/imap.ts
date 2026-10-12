@@ -1,6 +1,7 @@
 import { ImapFlow, type FetchMessageObject, type ListResponse, type MessageStructureObject, type SearchObject } from "imapflow";
 import { simpleParser, type ParsedMail } from "mailparser";
 import nodemailer from "nodemailer";
+import * as socksLib from "socks";
 import type { EmailAddress } from "@/db/schema";
 import { htmlToSnippet, textToSnippet } from "@/server/mail/html";
 import type {
@@ -29,6 +30,8 @@ export interface ImapAccountConfig {
   imap: { host: string; port: number; secure: boolean };
   smtp: { host: string; port: number; secure: boolean };
   auth: { user: string; pass: string } | { user: string; accessToken: string };
+  /** 可选：该账号的 IMAP/SMTP 连接走此代理（如 socks://host:port）——用于让国内邮箱（QQ/163）从中国出口连接 */
+  proxy?: string;
 }
 
 const CLIENT_INFO = { name: "Mailbox", version: "0.1.0", vendor: "mailbox" };
@@ -257,6 +260,7 @@ export class ImapProvider implements MailProvider {
       auth: this.cfg.auth,
       clientInfo: CLIENT_INFO,
       logger: false,
+      proxy: this.cfg.proxy, // 走代理时（如国内邮箱），IMAP 连接从代理出口发出；imapflow 原生支持
       disableAutoIdle: !opts.autoIdle,
       connectionTimeout: 30_000,
       greetingTimeout: 20_000,
@@ -560,14 +564,17 @@ export class ImapProvider implements MailProvider {
       "pass" in this.cfg.auth
         ? { user: this.cfg.auth.user, pass: this.cfg.auth.pass }
         : { type: "OAuth2" as const, user: this.cfg.auth.user, accessToken: this.cfg.auth.accessToken };
-    return nodemailer.createTransport({
+    const transport = nodemailer.createTransport({
       host: this.cfg.smtp.host,
       port: this.cfg.smtp.port,
       secure: this.cfg.smtp.secure,
       auth,
+      proxy: this.cfg.proxy, // 走代理时 SMTP 也从代理出口发出
       connectionTimeout: 30_000,
       greetingTimeout: 20_000,
     });
+    if (this.cfg.proxy?.startsWith("socks")) transport.set("proxy_socks_module", socksLib); // nodemailer 的 SOCKS 支持需注册 socks 模块
+    return transport;
   }
 
   async send(mime: Buffer, envelope: { from: string; to: string[] }): Promise<{ messageId?: string }> {

@@ -25,6 +25,17 @@ export function decryptCredentials(payload: string): StoredCredentials {
   return decryptJson<StoredCredentials>(payload, getEnv().APP_MASTER_KEY);
 }
 
+/**
+ * 该账号是否走代理：当配置了 CN_PROXY_URL 且账号的 preset 在 CN_PROXY_PRESETS（默认 qq,163,126）里时，
+ * 让它的 IMAP/SMTP 走该代理（socks://…，指向中国出口），绕开香港 IP 被 QQ/163 拦截的问题。
+ */
+function resolveAccountProxy(account: MailAccount): string | undefined {
+  const url = process.env.CN_PROXY_URL?.trim();
+  if (!url || !account.presetId) return undefined;
+  const presets = (process.env.CN_PROXY_PRESETS ?? "qq,163,126").split(",").map((s) => s.trim()).filter(Boolean);
+  return presets.includes(account.presetId) ? url : undefined;
+}
+
 export function accountToImapConfig(account: MailAccount, creds: StoredCredentials): ImapAccountConfig {
   const auth =
     account.authType === "oauth2"
@@ -35,6 +46,7 @@ export function accountToImapConfig(account: MailAccount, creds: StoredCredentia
     imap: { host: account.imapHost, port: account.imapPort, secure: account.imapSecure },
     smtp: { host: account.smtpHost, port: account.smtpPort, secure: account.smtpSecure },
     auth,
+    proxy: resolveAccountProxy(account),
   };
 }
 
