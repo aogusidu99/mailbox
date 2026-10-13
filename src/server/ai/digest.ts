@@ -173,10 +173,11 @@ export async function digestItemsInRange(userId: string, fromTs: Date, toTs: Dat
     .innerJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
     .where(and(inArray(messages.folderId, folderIds), gte(messages.date, fromTs), lt(messages.date, toTs)))
     .orderBy(messages.date);
-  // 同一封邮件在多个文件夹各有一行（Gmail 的标签副本）时，按 rfc822 Message-ID 去重，优先保留收件箱里的那行
+  // 同一邮箱内一封邮件在多个文件夹各有一行（Gmail 的标签副本）时按「账号 + Message-ID」去重，优先保留收件箱那行；
+  // 不同邮箱即使同一封信（相同 Message-ID）也各自保留，避免某个邮箱被整条吃掉
   const byKey = new Map<string, (typeof rows)[number]>();
   for (const r of rows) {
-    const key = r.message.messageId ? normId(r.message.messageId) : `row:${r.message.id}`;
+    const key = r.message.messageId ? `${r.message.accountId}::${normId(r.message.messageId)}` : `row:${r.message.id}`;
     const existing = byKey.get(key);
     if (!existing) {
       byKey.set(key, r);
@@ -297,7 +298,8 @@ async function analyzeDigestRange(userId: string, fromTs: Date, toTs: Date, cap?
   const annotated = new Set<string>();
   const pending = new Map<string, { id: string; accountId: string; role: string | null }>();
   for (const r of rows) {
-    const key = r.rfcId ? normId(r.rfcId) : `row:${r.id}`;
+    // 按「账号 + Message-ID」去重：只合并同一邮箱内的副本（Gmail 标签副本），不同邮箱的同一封信各自保留
+    const key = r.rfcId ? `${r.accountId}::${normId(r.rfcId)}` : `row:${r.id}`;
     if (r.annId) {
       annotated.add(key);
       continue;
