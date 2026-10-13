@@ -1,22 +1,34 @@
 import type { EmailAddress } from "@/db/schema";
 
-/** 列表用日期：今天显示时间，今年显示月日，否则显示年月日。 */
+/**
+ * 日期一律按此时区显示，和服务端每日摘要「按天」的时区保持一致（容器 TZ=Asia/Shanghai）。
+ * 否则当客户端运行时为 UTC 时（如桌面端内嵌浏览器），列表里凌晨的邮件会比真实（中国）日期早一天，
+ * 让人误以为摘要漏了邮件。
+ */
+const DISPLAY_TZ = "Asia/Shanghai";
+
+/** 某时刻在显示时区下的 YYYY-MM-DD（用于判断是否同一天/同一年，不受运行时时区影响） */
+function tzDateKey(d: Date): string {
+  return d.toLocaleDateString("en-CA", { timeZone: DISPLAY_TZ }); // en-CA → YYYY-MM-DD
+}
+
+/** 列表用日期：今天显示时间，今年显示月日，否则显示年月日（均按 DISPLAY_TZ）。 */
 export function formatListDate(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
-  return d.toLocaleDateString("zh-CN", { year: "numeric", month: "numeric", day: "numeric" });
+  const dk = tzDateKey(d);
+  const nk = tzDateKey(new Date());
+  if (dk === nk) return d.toLocaleTimeString("zh-CN", { timeZone: DISPLAY_TZ, hour: "2-digit", minute: "2-digit" });
+  if (dk.slice(0, 4) === nk.slice(0, 4)) return d.toLocaleDateString("zh-CN", { timeZone: DISPLAY_TZ, month: "numeric", day: "numeric" });
+  return d.toLocaleDateString("zh-CN", { timeZone: DISPLAY_TZ, year: "numeric", month: "numeric", day: "numeric" });
 }
 
 export function formatFullDate(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("zh-CN", { dateStyle: "medium", timeStyle: "short" });
+  return d.toLocaleString("zh-CN", { timeZone: DISPLAY_TZ, dateStyle: "medium", timeStyle: "short" });
 }
 
 export function formatBytes(bytes: number | null | undefined): string {
