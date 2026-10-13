@@ -13,6 +13,7 @@ import {
   Folder,
   Inbox,
   Languages,
+  Layers,
   ListTodo,
   Loader2,
   Mail,
@@ -36,6 +37,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { api } from "@/lib/api-client";
 import type { SidebarData } from "@/lib/api-types";
 import { useLocale, useT } from "@/lib/locale-context";
+import { ALL_MAIL_ID } from "@/lib/mail-constants";
 import { cn } from "cn";
 
 const ROLE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -203,6 +205,21 @@ export function Sidebar({
                 <>
                   {account.folders.length === 0 ? <div className="px-2 py-1 text-xs text-muted-foreground">{t.nav.fetchingFolders}</div> : null}
                   <ul className="space-y-0.5">
+                    {/* 一键查看该邮箱所有文件夹里的邮件（含被规则移出收件箱的分类邮件） */}
+                    <li>
+                      <Link
+                        href={`/mail/${account.id}/${ALL_MAIL_ID}`}
+                        onClick={onNavigate}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-sidebar-accent",
+                          params.accountId === account.id && params.folderId === ALL_MAIL_ID && "bg-sidebar-accent font-medium",
+                        )}
+                        style={{ paddingLeft: "8px" }}
+                      >
+                        <Layers className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate">{roleLabels.all ?? "所有邮件"}</span>
+                      </Link>
+                    </li>
                     {account.folders
                       .filter((f) => !f.noSelect || f.depth === 0)
                       .map((folder) => {

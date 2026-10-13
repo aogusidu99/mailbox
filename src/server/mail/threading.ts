@@ -1,8 +1,8 @@
-import { and, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiAnnotations, mailAccounts, messages } from "@/db/schema";
 import type { MessageListItem, ThreadGroup, ThreadListResponse, ThreadNode } from "@/lib/api-types";
-import { effectiveDate, toListItem } from "./queries";
+import { ALL_MAIL_ID, allMailFolderIds, dedupByMessageId, effectiveDate, toListItem } from "./queries";
 
 /**
  * 会话视图（threading）：把一个文件夹里的邮件按主题汇总成会话，并按 In-Reply-To / References
@@ -227,7 +227,18 @@ export async function threadFolder(params: ThreadFolderParams): Promise<ThreadLi
   const account = await db.query.mailAccounts.findFirst({ where: and(eq(mailAccounts.id, params.accountId), eq(mailAccounts.userId, params.userId)) });
   if (!account) return { threads: [], total: 0, capped: false };
 
-  const conds: SQL[] = [eq(messages.accountId, params.accountId), eq(messages.folderId, params.folderId)];
+  // 「所有邮件」：跨该邮箱各文件夹汇总会话（下面取数后再按 Message-ID 去重）
+  const isAll = params.folderId === ALL_MAIL_ID;
+  let roleById = new Map<string, string | null>();
+  const conds: SQL[] = [eq(messages.accountId, params.accountId)];
+  if (isAll) {
+    const r = await allMailFolderIds(params.userId, params.accountId);
+    if (r.folderIds.length === 0) return { threads: [], total: 0, capped: false };
+    roleById = r.roleById;
+    conds.push(inArray(messages.folderId, r.folderIds));
+  } else {
+    conds.push(eq(messages.folderId, params.folderId));
+  }
   if (params.unreadOnly) conds.push(eq(messages.seen, false));
   if (params.flaggedOnly) conds.push(eq(messages.flagged, true));
   if (params.q && params.q.trim()) {
@@ -245,7 +256,8 @@ export async function threadFolder(params: ThreadFolderParams): Promise<ThreadLi
     .limit(MAX_MESSAGES + 1);
 
   const capped = rows.length > MAX_MESSAGES;
-  const page = rows.slice(0, MAX_MESSAGES);
+  // 「所有邮件」下同一封邮件可能在多个文件夹各有一行，先去重再汇总会话
+  const page = isAll ? dedupByMessageId(rows.slice(0, MAX_MESSAGES), roleById) : rows.slice(0, MAX_MESSAGES);
 
   const input: ThreadInputMsg[] = page.map((r) => {
     const item = toListItem({ ...r.message, effectiveDate: r.effectiveDate, ai: r.ai });

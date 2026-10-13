@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, lt, ne } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import { getDb } from "@/db";
 import { aiSettings, aiAnnotations, digestReports, folders, mailAccounts, messages, type AiSettingsData, type DigestDisposition } from "@/db/schema";
 import { deleteMessages, markMessages, moveMessages, setGmailLabels } from "@/server/mail/ops";
@@ -138,18 +138,53 @@ export async function resolveRange(userId: string, kind: DigestKind, opts: Range
 
 const PRIORITY_ORDER: Record<string, number> = { high: 0, normal: 1, low: 2 };
 
+/**
+ * 摘要只覆盖「用户会浏览的来信文件夹」：收件箱 + 各 AI 分类文件夹；排除已发送/草稿/已删除/垃圾/归档/所有邮件。
+ * 关键：QQ/163/Outlook 的规则是把邮件「移动」出收件箱到分类文件夹，所以不能只看 role=inbox，
+ * 否则这些邮箱当天的来信全被漏掉（Gmail 用打标签，收件箱仍留副本，才一直能进摘要）。
+ */
+const DIGEST_SKIP_ROLES = new Set<string>(["sent", "drafts", "trash", "junk", "archive", "all"]);
+
+/** 归一化 rfc822 Message-ID：去尖括号 + 小写，用于跨文件夹副本去重 */
+function normId(id: string): string {
+  return id.trim().replace(/^<|>$/g, "").trim().toLowerCase();
+}
+
+/** 用户各邮箱里「摘要应覆盖」的文件夹 id（收件箱 + 分类文件夹），附文件夹角色表用于去重时优先保留收件箱副本 */
+async function digestFolders(userId: string): Promise<{ folderIds: string[]; roleById: Map<string, string | null> }> {
+  const db = await getDb();
+  const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
+  if (accounts.length === 0) return { folderIds: [], roleById: new Map() };
+  const fs = await db.query.folders.findMany({ where: inArray(folders.accountId, accounts.map((a) => a.id)) });
+  const kept = fs.filter((f) => !DIGEST_SKIP_ROLES.has(f.role ?? "other") && !f.noSelect);
+  return { folderIds: kept.map((f) => f.id), roleById: new Map(fs.map((f) => [f.id, f.role] as const)) };
+}
+
 export async function digestItemsInRange(userId: string, fromTs: Date, toTs: Date): Promise<DigestItem[]> {
   const db = await getDb();
   const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
   if (accounts.length === 0) return [];
   const accountLabel = new Map(accounts.map((a) => [a.id, a.displayName || a.email]));
+  const { folderIds, roleById } = await digestFolders(userId);
+  if (folderIds.length === 0) return [];
   const rows = await db
     .select({ message: messages, ai: aiAnnotations })
     .from(messages)
     .innerJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
-    .where(and(inArray(messages.accountId, accounts.map((a) => a.id)), gte(messages.date, fromTs), lt(messages.date, toTs)))
+    .where(and(inArray(messages.folderId, folderIds), gte(messages.date, fromTs), lt(messages.date, toTs)))
     .orderBy(messages.date);
-  return rows
+  // 同一封邮件在多个文件夹各有一行（Gmail 的标签副本）时，按 rfc822 Message-ID 去重，优先保留收件箱里的那行
+  const byKey = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) {
+    const key = r.message.messageId ? normId(r.message.messageId) : `row:${r.message.id}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, r);
+    } else if (roleById.get(r.message.folderId) === "inbox" && roleById.get(existing.message.folderId) !== "inbox") {
+      byKey.set(key, r);
+    }
+  }
+  return [...byKey.values()]
     .map(({ message: m, ai }) => ({
       messageId: m.id,
       accountId: m.accountId,
@@ -244,27 +279,41 @@ async function upsert(userId: string, range: ResolvedRange, content: string | nu
 }
 
 /**
- * 按需分析：把时间段内收件箱中「还没分析过」的邮件即时跑一遍 triage。
+ * 按需分析：把时间段内「收件箱 + 各分类文件夹」里还没分析过的邮件即时跑一遍 triage。
+ * - 覆盖分类文件夹是关键：QQ/163/Outlook 的来信会被规则移出收件箱，只看收件箱会把它们全漏掉。
+ * - 按 rfc822 Message-ID 去重：同一封邮件（Gmail 在多个文件夹各一行）只分析一次；任一副本已分析过则整组跳过。
  * cap 为上限（前台「生成」按钮传一个数防超时）；不传 = 分析全部（每日定时摘要后台跑，不设限）。
  */
-async function analyzeRangeInbox(userId: string, fromTs: Date, toTs: Date, cap?: number): Promise<number> {
+async function analyzeDigestRange(userId: string, fromTs: Date, toTs: Date, cap?: number): Promise<number> {
   const db = await getDb();
-  const accounts = await db.query.mailAccounts.findMany({ where: eq(mailAccounts.userId, userId) });
-  if (accounts.length === 0) return 0;
-  const inboxes = await db.query.folders.findMany({ where: and(inArray(folders.accountId, accounts.map((a) => a.id)), eq(folders.role, "inbox")) });
-  if (inboxes.length === 0) return 0;
-  const q = db
-    .select({ id: messages.id, accountId: messages.accountId })
+  const { folderIds, roleById } = await digestFolders(userId);
+  if (folderIds.length === 0) return 0;
+  const rows = await db
+    .select({ id: messages.id, accountId: messages.accountId, folderId: messages.folderId, rfcId: messages.messageId, annId: aiAnnotations.id })
     .from(messages)
     .leftJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
-    .where(and(inArray(messages.folderId, inboxes.map((f) => f.id)), gte(messages.date, fromTs), lt(messages.date, toTs), isNull(aiAnnotations.id)))
+    .where(and(inArray(messages.folderId, folderIds), gte(messages.date, fromTs), lt(messages.date, toTs)))
     .orderBy(desc(messages.date));
-  const rows = cap && cap > 0 ? await q.limit(cap) : await q;
+  const annotated = new Set<string>();
+  const pending = new Map<string, { id: string; accountId: string; role: string | null }>();
+  for (const r of rows) {
+    const key = r.rfcId ? normId(r.rfcId) : `row:${r.id}`;
+    if (r.annId) {
+      annotated.add(key);
+      continue;
+    }
+    const role = roleById.get(r.folderId) ?? null;
+    const cur = pending.get(key);
+    if (!cur) pending.set(key, { id: r.id, accountId: r.accountId, role });
+    else if (role === "inbox" && cur.role !== "inbox") pending.set(key, { id: r.id, accountId: r.accountId, role });
+  }
+  let targets = [...pending.entries()].filter(([k]) => !annotated.has(k)).map(([, v]) => v);
+  if (cap && cap > 0) targets = targets.slice(0, cap); // rows 已按日期倒序，cap 保留最新的
   const { triageMessage } = await import("./triage");
   let n = 0;
-  for (const r of rows) {
+  for (const t of targets) {
     // force：无视账号「AI 处理」开关和范围限制，直接分析（错误会向上抛出，便于提示未配置 Key 等）
-    await triageMessage(r.accountId, r.id, { force: true });
+    await triageMessage(t.accountId, t.id, { force: true });
     n += 1;
   }
   return n;
@@ -283,7 +332,7 @@ export interface GenerateDigestOptions extends RangeOptions {
 export async function generateDigest(userId: string, kind: DigestKind, opts: GenerateDigestOptions = {}): Promise<DigestResult> {
   const db = await getDb();
   const range = await resolveRange(userId, kind, opts);
-  if (opts.analyze) await analyzeRangeInbox(userId, range.fromTs, range.toTs, opts.analyzeCap);
+  if (opts.analyze) await analyzeDigestRange(userId, range.fromTs, range.toTs, opts.analyzeCap);
   const items = await digestItemsInRange(userId, range.fromTs, range.toTs);
 
   const cached = await db.query.digestReports.findFirst({ where: and(eq(digestReports.userId, userId), eq(digestReports.periodKey, range.periodKey)) });

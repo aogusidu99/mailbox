@@ -50,6 +50,9 @@ const zh = {
     refresh: "刷新",
     compose: "写邮件",
     conversationView: "会话视图（按主题汇总，显示回复关系）",
+    threadView: "会话",
+    flatView: "平铺",
+    viewMode: "列表显示方式",
     threadCapped: "邮件较多，仅按最近 500 封汇总会话",
   },
   view: {
@@ -193,6 +196,9 @@ const en: Dict = {
     refresh: "Refresh",
     compose: "Compose",
     conversationView: "Conversation view (group by subject, show reply tree)",
+    threadView: "Threads",
+    flatView: "Flat",
+    viewMode: "List display mode",
     threadCapped: "Many messages — grouping only the most recent 500",
   },
   view: {

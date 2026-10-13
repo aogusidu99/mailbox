@@ -92,7 +92,9 @@ export async function refreshFolderAction(accountId: string, folderId: string): 
     const user = await requireUser();
     const account = await getAccountForUser(user.id, accountId);
     if (!account) throw new Error("账号不存在");
-    await enqueueSyncFolder(accountId, { folderId });
+    // 「所有邮件」视图没有单个文件夹，刷新 = 同步整个账号
+    if (folderId === "__all__") await enqueueSyncAccount(accountId, "manual");
+    else await enqueueSyncFolder(accountId, { folderId });
     return { ok: true, data: undefined };
   } catch (err) {
     return fail(err);

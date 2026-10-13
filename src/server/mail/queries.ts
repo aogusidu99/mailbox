@@ -4,6 +4,7 @@ import path from "node:path";
 import { getDb } from "@/db";
 import { aiAnnotations, attachments, folders, mailAccounts, messages, type Message } from "@/db/schema";
 import type { AttachmentDto, MessageDetail, MessageListItem, MessageListResponse, SidebarData } from "@/lib/api-types";
+import { ALL_MAIL_ID } from "@/lib/mail-constants";
 import { withWarmProvider } from "@/server/providers/warm-pool";
 import { sanitizeEmailHtml, textToHtml } from "./html";
 import { ensureMessageBody } from "@/server/sync/engine";
@@ -63,6 +64,40 @@ export async function getSidebarData(userId: string): Promise<SidebarData> {
         })),
     })),
   };
+}
+
+// 便于 threading.ts / 页面从本模块统一取用
+export { ALL_MAIL_ID };
+/** 「所有邮件」汇总时排除的文件夹角色：已删除/垃圾/草稿，以及 Gmail 的「所有邮件」容器（避免整份重复）。保留已发送 + 归档。 */
+const ALL_MAIL_SKIP_ROLES = new Set<string>(["trash", "junk", "drafts", "all"]);
+/** 「所有邮件」最多汇总的封数（够覆盖 QQ/163/Outlook 全部；Gmail 取最近这些）。 */
+const ALL_MAIL_CAP = 500;
+
+/** 归一化 rfc822 Message-ID：去尖括号 + 小写，用于跨文件夹副本去重 */
+function normId(id: string): string {
+  return id.trim().replace(/^<|>$/g, "").trim().toLowerCase();
+}
+
+/** 解析某邮箱「所有邮件」应汇总的文件夹 id（校验归属），附角色表用于去重时优先保留收件箱副本。 */
+export async function allMailFolderIds(userId: string, accountId: string): Promise<{ folderIds: string[]; roleById: Map<string, string | null> }> {
+  const db = await getDb();
+  const account = await db.query.mailAccounts.findFirst({ where: and(eq(mailAccounts.id, accountId), eq(mailAccounts.userId, userId)) });
+  if (!account) return { folderIds: [], roleById: new Map() };
+  const fs = await db.query.folders.findMany({ where: eq(folders.accountId, accountId) });
+  const kept = fs.filter((f) => !ALL_MAIL_SKIP_ROLES.has(f.role ?? "other") && !f.noSelect);
+  return { folderIds: kept.map((f) => f.id), roleById: new Map(fs.map((f) => [f.id, f.role] as const)) };
+}
+
+/** 对同一封邮件在多个文件夹各有一行（Gmail 标签副本）去重，优先保留收件箱里的那行；输入需已按日期倒序。 */
+export function dedupByMessageId<T extends { message: Message }>(rows: T[], roleById: Map<string, string | null>): T[] {
+  const byKey = new Map<string, T>();
+  for (const r of rows) {
+    const key = r.message.messageId ? normId(r.message.messageId) : `row:${r.message.id}`;
+    const existing = byKey.get(key);
+    if (!existing) byKey.set(key, r);
+    else if (roleById.get(r.message.folderId) === "inbox" && roleById.get(existing.message.folderId) !== "inbox") byKey.set(key, r);
+  }
+  return [...byKey.values()];
 }
 
 function encodeCursor(date: Date, id: string): string {
@@ -125,6 +160,29 @@ export async function listMessages(params: ListMessagesParams): Promise<MessageL
   });
   if (!account) return { items: [], nextCursor: null };
   const limit = Math.min(params.limit ?? PAGE_SIZE, 200);
+
+  // 「所有邮件」：汇总该邮箱各文件夹（收件箱+分类+已发送+归档），按 Message-ID 去重，取最近 ALL_MAIL_CAP 封（不分页）
+  if (params.folderId === ALL_MAIL_ID) {
+    const { folderIds, roleById } = await allMailFolderIds(params.userId, params.accountId);
+    if (folderIds.length === 0) return { items: [], nextCursor: null };
+    const allConds: SQL[] = [inArray(messages.folderId, folderIds)];
+    if (params.unreadOnly) allConds.push(eq(messages.seen, false));
+    if (params.flaggedOnly) allConds.push(eq(messages.flagged, true));
+    if (params.q && params.q.trim()) {
+      const term = `%${params.q.trim()}%`;
+      allConds.push(or(ilike(messages.subject, term), ilike(messages.snippet, term), sql`${messages.fromAddrs}::text ilike ${term}`, sql`${messages.toAddrs}::text ilike ${term}`) as SQL);
+    }
+    if (params.category) allConds.push(eq(aiAnnotations.category, params.category));
+    const rows = await db
+      .select({ message: messages, ai: aiAnnotations, effectiveDate })
+      .from(messages)
+      .leftJoin(aiAnnotations, eq(aiAnnotations.messageId, messages.id))
+      .where(and(...allConds))
+      .orderBy(desc(effectiveDate), desc(messages.id))
+      .limit(ALL_MAIL_CAP);
+    const deduped = dedupByMessageId(rows, roleById);
+    return { items: deduped.map((r) => toListItem({ ...r.message, effectiveDate: r.effectiveDate, ai: r.ai })), nextCursor: null };
+  }
 
   const conds: SQL[] = [eq(messages.accountId, params.accountId), eq(messages.folderId, params.folderId)];
   if (params.unreadOnly) conds.push(eq(messages.seen, false));

@@ -2,7 +2,7 @@
 
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ListTree, Loader2, Paperclip, RefreshCw, Search, Star } from "lucide-react";
+import { List, ListTree, Loader2, Paperclip, RefreshCw, Search, Star } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -101,16 +101,15 @@ export function MessageList({
       /* 忽略 */
     }
   }, []);
-  const toggleConversation = () =>
-    setConversationView((v) => {
-      const next = !v;
-      try {
-        localStorage.setItem(CONVERSATION_VIEW_KEY, next ? "1" : "0");
-      } catch {
-        /* 忽略 */
-      }
-      return next;
-    });
+  // 切换「会话视图 / 平铺视图」并记到 localStorage（供过滤栏里的分段开关调用）
+  const setConversation = (next: boolean) => {
+    setConversationView(next);
+    try {
+      localStorage.setItem(CONVERSATION_VIEW_KEY, next ? "1" : "0");
+    } catch {
+      /* 忽略 */
+    }
+  };
 
   const query = useInfiniteQuery({
     queryKey: ["messages", accountId, folderId, filterKey],
@@ -152,16 +151,6 @@ export function MessageList({
           <h2 className="truncate text-sm font-semibold">{folderName}</h2>
           <div className="flex items-center gap-1">
             {headerExtra}
-            <Button
-              variant={conversationView ? "default" : "ghost"}
-              size="icon-sm"
-              onClick={toggleConversation}
-              title={t.list.conversationView}
-              aria-label={t.list.conversationView}
-              aria-pressed={conversationView}
-            >
-              <ListTree className="size-4" />
-            </Button>
             <Button variant="ghost" size="icon-sm" onClick={onRefresh} title={t.list.refresh} aria-label={t.list.refresh} disabled={refreshing}>
               <RefreshCw className={cn("size-4", (refreshing || query.isFetching || threadsQuery.isFetching) && "animate-spin")} />
             </Button>
@@ -171,7 +160,27 @@ export function MessageList({
           <Search className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))} placeholder={t.list.searchPlaceholder} className="pl-8" />
         </div>
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap items-center gap-1">
+          {/* 列表显示方式：会话（按主题汇总）/ 平铺（每封单独），紧挨未读/星标 */}
+          <div className="flex items-center overflow-hidden rounded-md border border-input" role="group" aria-label={t.list.viewMode}>
+            <button
+              type="button"
+              onClick={() => setConversation(true)}
+              aria-pressed={conversationView}
+              title={t.list.conversationView}
+              className={cn("flex items-center gap-1 px-2 py-0.5 text-xs", conversationView ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}
+            >
+              <ListTree className="size-3.5" /> {t.list.threadView}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConversation(false)}
+              aria-pressed={!conversationView}
+              className={cn("flex items-center gap-1 border-l border-input px-2 py-0.5 text-xs", !conversationView ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}
+            >
+              <List className="size-3.5" /> {t.list.flatView}
+            </button>
+          </div>
           <Button size="xs" variant={filters.unread ? "default" : "outline"} onClick={() => setFilters((f) => ({ ...f, unread: !f.unread }))}>
             {t.list.unread}
           </Button>
