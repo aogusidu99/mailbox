@@ -210,7 +210,7 @@ mailbox 是服务端应用，所以把 localStorage 换成数据库（加密）�
 ### M6 验收记录（2026-09-13）
 
 - **数据库**：新增 `message_translations`、`chat_threads`、`chat_messages`、`digest_reports` 四张表（迁移 `drizzle/0005_swift_vengeance.sql`，纯新增，不破坏旧数据；旧 `ai_digests` 缓存表保留但不再使用）。
-- **邮件翻译**：`src/server/ai/translate.ts` + 读信界面「翻译」下拉（原文/中/英/德，可重译）；目标语言在「AI 设置 → 邮件翻译语言」里增删；新增 `translate` 任务等级参与模型路由。
+- **邮件翻译**：`src/server/ai/translate.ts` + 读信界面「翻译」下拉（原文/中/英/德，可重译）；HTML 邮件「保留排版」翻译（`html-segments.ts`：按块拆出文字片段、行内标签换成占位符，只译文字再拼回原 HTML，译后 HTML 缓存在 `message_translations.html`）；目标语言在「AI 设置 → 邮件翻译语言」里增删；新增 `translate` 任务等级参与模型路由。
 - **对话历史**：`src/server/ai/chat-store.ts` 持久化会话；`/mail/chat` 左侧会话列表、新建/续聊/删除；`chatTurn` 保持无状态，落库在 action 层。
 - **摘要处理台**：`src/server/ai/digest.ts`（时间段解析、处理意见生成、自然语言 replan、批量执行、回复生成）；`/mail/digest` 页面支持时间段切换、逐封处理意见编辑、批量确认执行、回复起草并发送。
 - **回复密送自己**：`mail_accounts` 新增 `bcc_self_on_reply` 列（迁移 `0006`），邮箱管理页每账号一个开关；`send.ts` 的 `bccSelfAddress()` 仅在回复（有 inReplyToMessageId）时把本邮箱加入 BCC（不进邮件头、已在收件人则跳过）。

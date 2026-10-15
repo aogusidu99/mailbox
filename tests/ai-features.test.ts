@@ -11,7 +11,7 @@ import { aiAnnotations, folders, mailAccounts, messageTranslations, messages, us
 import { deleteThread, getThreadMessages, listThreads, sendChatMessage } from "@/server/ai/chat-store";
 import { executeDispositions, generateDigest, loadDigest, replanDigest, resolveRange, todayKey } from "@/server/ai/digest";
 import { saveAiSettings } from "@/server/ai/settings";
-import { translateMessage } from "@/server/ai/translate";
+import { toTranslationView, translateMessage } from "@/server/ai/translate";
 import { stopBossForTests } from "@/server/jobs/boss";
 import { encryptCredentials } from "@/server/providers/factory";
 import { startFakeOpenAI, type FakeOpenAI } from "./helpers/fake-openai";
@@ -34,6 +34,11 @@ describe("翻译 / 对话历史 / 摘要处理台", () => {
       jsonReply: (m) => {
         const sys = m.find((x) => x.role === "system")?.content ?? "";
         const id = m.map((x) => x.content).join("\n").match(/id=([0-9a-f-]{36})/)?.[1] ?? "";
+        // HTML 保留排版翻译：逐段加前缀「DE:」，占位符原样返回
+        if (sys.includes("保留排版")) {
+          const input = JSON.parse(m[m.length - 1].content) as { subject: string; segments: Array<{ id: number; text: string }> };
+          return { subject: input.subject ? `DE:${input.subject}` : "", segments: input.segments.map((s) => ({ id: s.id, text: `DE:${s.text}` })) };
+        }
         if (sys.includes("专业的邮件翻译")) return { subject: "Rechnung ausgestellt", body: "übersetzter Text" };
         if (sys.includes("调整后的完整处理意见")) return { dispositions: [{ messageId: id, action: "mark_read", value: null, reason: "通知类，标记已读", replyPoints: null }] };
         if (sys.includes("处理意见")) return { dispositions: [{ messageId: id, action: "flag", value: null, reason: "发票需跟进", replyPoints: null }] };
@@ -112,6 +117,48 @@ describe("翻译 / 对话历史 / 摘要处理台", () => {
     expect(stored).toHaveLength(1); // 同语言只保留一份
 
     await expect(translateMessage(userId, invoiceId, "xx")).rejects.toThrow();
+  });
+
+  test("HTML 邮件翻译保留排版：只替换文字，表格 / 链接 / 图片原样，展示时按设置屏蔽远程图片", async () => {
+    const [archive] = await handle.db.insert(folders).values({ accountId, path: "Archive", name: "Archive", role: "archive" }).returning();
+    const [msg] = await handle.db
+      .insert(messages)
+      .values({
+        accountId,
+        folderId: archive.id,
+        uid: 2,
+        subject: "Your receipt",
+        fromAddrs: [{ name: "Stripe", address: "s@x.com" }],
+        toAddrs: [{ address: "me@x.com" }],
+        // 放在很早的日期，避免影响后面「今天」的摘要用例
+        date: new Date("2020-01-01T00:00:00Z"),
+        textBody: "Receipt (https://x.com) plain text version",
+        htmlBody: `<table width="100%"><tr><td><img src="https://x.com/logo.png"> Receipt from <b>Anthropic</b></td><td>€107.10</td></tr></table><p>Visit our <a href="https://support.x.com">support site</a>.</p><script>alert(1)</script>`,
+        bodyFetchedAt: new Date(),
+      })
+      .returning();
+
+    const r = await translateMessage(userId, msg.id, "de");
+    expect(r.subject).toBe("DE:Your receipt");
+    // 译文 HTML：结构不变，只有文字被替换；纯金额没翻译；脚本已清洗掉
+    expect(r.html).toContain(`<table width="100%"><tr><td><img src="https://x.com/logo.png" /> DE:Receipt from <b>Anthropic</b></td><td>€107.10</td></tr></table>`);
+    expect(r.html).toContain(`<p>DE:Visit our <a href="https://support.x.com" target="_blank" rel="noopener noreferrer nofollow">support site</a>.</p>`);
+    expect(r.html).not.toContain("<script");
+    expect(r.body).toContain("DE:Receipt from Anthropic");
+
+    // 展示：默认屏蔽远程图片，点「显示图片」后放行
+    expect(toTranslationView(r).html).not.toContain(`src="https://x.com/logo.png"`);
+    expect(toTranslationView(r, { allowRemoteImages: true }).html).toContain(`src="https://x.com/logo.png"`);
+
+    // 再次翻译命中缓存（含 HTML）
+    const again = await translateMessage(userId, msg.id, "de");
+    expect(again.cached).toBe(true);
+    expect(again.html).toBe(r.html);
+
+    // 纯文本邮件的译文也渲染成 HTML（与原文同样的渲染方式）
+    const plain = await translateMessage(userId, invoiceId, "de");
+    expect(plain.html).toBeNull();
+    expect(toTranslationView(plain).html).toContain("übersetzter Text");
   });
 
   test("对话历史：新建会话→落库→续聊→列出→删除", async () => {

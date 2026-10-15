@@ -22,6 +22,8 @@ interface Translation {
   label: string;
   subject: string | null;
   body: string;
+  /** 译文 HTML：HTML 邮件保留原排版，只替换文字；已按「是否显示远程图片」清洗 */
+  html: string;
   model: string | null;
   /** true = 阅读时自动译（非中/英文邮件），非用户手动点的 */
   auto?: boolean;
@@ -51,12 +53,12 @@ export function MessageView({
 
   const translate = (lang: { code: string; label: string }, refresh = false) =>
     startTranslate(async () => {
-      const r = await translateMessageAction(messageId, lang.code, refresh);
+      const r = await translateMessageAction(messageId, lang.code, refresh, remote);
       if (!r.ok) {
         toast.error(fmt(t.view.translateFailed, { error: r.error }));
         return;
       }
-      setTranslation({ lang: lang.code, label: lang.label, subject: r.data.subject, body: r.data.body, model: r.data.model });
+      setTranslation({ lang: lang.code, label: lang.label, subject: r.data.subject, body: r.data.body, html: r.data.html, model: r.data.model });
     });
 
   const unsubscribe = () =>
@@ -87,14 +89,31 @@ export function MessageView({
     if (!autoEnglish || !query.data || autoTriedRef.current === messageId) return;
     autoTriedRef.current = messageId;
     startTranslate(async () => {
-      const r = await autoTranslateAction(messageId);
+      const r = await autoTranslateAction(messageId, remote);
       if (r.ok && r.data.translated && r.data.result) {
         const en = langs.find((l) => l.code === "en");
-        setTranslation({ lang: "en", label: en?.label ?? "English", subject: r.data.result.subject, body: r.data.result.body, model: r.data.result.model, auto: true });
+        const res = r.data.result;
+        setTranslation({ lang: "en", label: en?.label ?? "English", subject: res.subject, body: res.body, html: res.html, model: res.model, auto: true });
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoEnglish, query.data, messageId]);
+
+  // 点了「显示图片」后，正在看的译文也换成放行远程图片的版本（命中翻译缓存，不会重新调模型）
+  useEffect(() => {
+    if (!remote || !translation) return;
+    const current = translation;
+    startTranslate(async () => {
+      if (current.auto) {
+        const r = await autoTranslateAction(messageId, true);
+        if (r.ok && r.data.result) setTranslation({ ...current, html: r.data.result.html });
+      } else {
+        const r = await translateMessageAction(messageId, current.lang, false, true);
+        if (r.ok) setTranslation({ ...current, html: r.data.html });
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remote]);
 
   if (query.isLoading) {
     return (
@@ -201,8 +220,8 @@ export function MessageView({
         </div>
 
         {translation ? (
-          <div className="space-y-2 px-4 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
+          <div>
+            <div className="mx-4 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
               <span>{translation.auto ? fmt(t.view.autoTranslated, { model: translation.model ?? "" }) : fmt(t.view.translatedBy, { lang: translation.label, model: translation.model ?? "" })}</span>
               <span className="flex items-center gap-3">
                 <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => translate({ code: translation.lang, label: translation.label }, true)} disabled={translating}>
@@ -213,7 +232,8 @@ export function MessageView({
                 </button>
               </span>
             </div>
-            <div className="whitespace-pre-wrap text-sm leading-relaxed">{translation.body}</div>
+            {/* 译文与原文用同一个安全 iframe 渲染：HTML 邮件保留原排版，只是文字换成了译文 */}
+            <EmailFrame html={translation.html} />
           </div>
         ) : m.html ? (
           <EmailFrame html={m.html} />

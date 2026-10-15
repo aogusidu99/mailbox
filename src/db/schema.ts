@@ -349,7 +349,10 @@ export const messageTranslations = pgTable(
     /** 目标语言 BCP-47 code */
     lang: text("lang").notNull(),
     subject: text("subject"),
+    /** 译文纯文本（HTML 邮件为译后 HTML 去标签的结果） */
     body: text("body").notNull(),
+    /** HTML 邮件「保留排版」的译后 HTML（已清洗、远程图片未屏蔽；展示前再按用户选择屏蔽）；纯文本邮件为 null */
+    html: text("html"),
     model: text("model").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

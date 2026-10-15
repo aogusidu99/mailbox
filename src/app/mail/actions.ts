@@ -132,21 +132,25 @@ export async function aiSummarizeAction(messageId: string) {
   });
 }
 
-/** 把邮件翻译成目标语言（结果缓存，可 refresh 重译） */
-export async function translateMessageAction(messageId: string, lang: string, refresh = false) {
+/**
+ * 把邮件翻译成目标语言（结果缓存，可 refresh 重译）。
+ * remote = 是否放行远程图片：译文 HTML 按同样的隐私规则清洗后返回（切换「显示图片」时重新取一次，命中缓存不再调模型）。
+ */
+export async function translateMessageAction(messageId: string, lang: string, refresh = false, remote = false) {
   return run(async () => {
     const user = await requireUser();
-    const { translateMessage } = await import("@/server/ai/translate");
-    return translateMessage(user.id, messageId, lang, { refresh });
+    const { toTranslationView, translateMessage } = await import("@/server/ai/translate");
+    return toTranslationView(await translateMessage(user.id, messageId, lang, { refresh }), { allowRemoteImages: remote });
   });
 }
 
 /** 阅读时自动翻译：非中/英文邮件自动译成英文（受 AI 设置开关控制，结果与手动翻译共用缓存） */
-export async function autoTranslateAction(messageId: string) {
+export async function autoTranslateAction(messageId: string, remote = false) {
   return run(async () => {
     const user = await requireUser();
-    const { autoTranslateToEnglish } = await import("@/server/ai/translate");
-    return autoTranslateToEnglish(user.id, messageId);
+    const { autoTranslateToEnglish, toTranslationView } = await import("@/server/ai/translate");
+    const r = await autoTranslateToEnglish(user.id, messageId);
+    return { ...r, result: r.result ? toTranslationView(r.result, { allowRemoteImages: remote }) : undefined };
   });
 }
 

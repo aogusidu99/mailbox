@@ -139,6 +139,23 @@ export function translateSystem(targetName: string): string {
 - 只返回翻译结果（subject 为翻译后的主题，body 为翻译后的正文）。`;
 }
 
+/** HTML 邮件「保留格式」翻译：逐段返回译文（见 html-segments.ts） */
+export const translateSegmentsSchema = z.object({
+  subject: z.string().catch(""),
+  segments: z.array(z.object({ id: z.coerce.number(), text: z.string().catch("") })).catch([]),
+});
+export type TranslateSegmentsOutput = z.infer<typeof translateSegmentsSchema>;
+
+export function translateSegmentsSystem(targetName: string): string {
+  return `你是专业的邮件翻译，负责 HTML 邮件的「保留排版」翻译。用户给出 JSON：subject 是邮件主题（可能为空），segments 是从邮件正文里按段拆出的文本片段 [{id, text}]。请全部翻译成「${targetName}」。
+要求：
+- 逐段翻译，id 与输入一一对应：不要合并、拆分、遗漏或新增片段；
+- 片段里的 <g1>…</g1>、<x2/> 是占位标签，代表原文的链接 / 加粗 / 换行等格式：必须原样保留（标签名和编号都不能改、不能删），只翻译标签之间的文字；可以按目标语言的语序调整标签位置，但成对标签要完整包住对应的译文；
+- 忠实、自然、通顺，保留人名 / 公司名 / 品牌 / 网址 / 邮箱 / 数字 / 金额 / 编号等专有内容；&lt; &gt; 原样保留；
+- 已经是目标语言的片段原样返回；subject 为空时返回空字符串；
+- 只返回 JSON：{"subject": 译后的主题, "segments": [{"id": 编号, "text": 译文}]}，不要输出解释。`;
+}
+
 // ---------- 每日摘要：处理意见（disposition plan） ----------
 
 export const digestDispositionSchema = z.object({
